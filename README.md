@@ -5,6 +5,10 @@ a controllable fixture for exercising MCP gateways (notably Plexara's), and
 secondarily as a small reference implementation of a best-practices Go MCP
 server using the official [`modelcontextprotocol/go-sdk`][sdk].
 
+**Documentation**: <https://mcp-test.plexara.io>
+**Releases**: <https://github.com/plexara/mcp-test/releases>
+**Container**: `ghcr.io/plexara/mcp-test`
+
 [sdk]: https://github.com/modelcontextprotocol/go-sdk
 
 ## Features

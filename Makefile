@@ -49,7 +49,7 @@ GOLINT   := golangci-lint
         dead-code mutate semgrep \
         verify tools-check \
         dev dev-anon dev-up dev-wait dev-ui-if-needed dev-down dev-logs \
-        docker run version
+        docker docs docs-serve run version
 
 ## all: Build, test, lint
 all: build test lint
@@ -244,9 +244,25 @@ dev-down:
 dev-logs:
 	docker compose -f docker-compose.dev.yml logs -f --tail=100
 
-## docker: Build the docker image
-docker:
-	docker buildx build -f build/Dockerfile -t $(BINARY_NAME):$(VERSION) .
+## docker: Build the docker image (matches the goreleaser pipeline).
+##         Builds the binary first, copies it where the goreleaser-style
+##         Dockerfile expects it, then runs buildx for linux/amd64.
+docker: build
+	@mkdir -p linux/amd64
+	@cp $(BUILD_DIR)/$(BINARY_NAME) linux/amd64/$(BINARY_NAME)
+	docker buildx build --platform linux/amd64 \
+		--build-arg TARGETARCH=amd64 \
+		-t $(BINARY_NAME):$(VERSION) \
+		--load .
+	@rm -rf linux/
+
+## docs: Build the documentation site (requires mkdocs-material).
+docs:
+	mkdocs build --strict
+
+## docs-serve: Serve the documentation site locally on :8000.
+docs-serve:
+	mkdocs serve
 
 ## run: Build and run
 run: build
