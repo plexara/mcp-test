@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "mcp-test": {
+      "type": "http",
+      "transport": "streamable-http",
+      "url": "http://localhost:8080/",
+      "headers": {
+        "X-API-Key": "devkey-please-change"
+      }
+    }
+  }
+}
