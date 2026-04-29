@@ -260,9 +260,13 @@ docker: build
 docs:
 	mkdocs build --strict
 
-## docs-serve: Serve the documentation site locally on :8000.
+## docs-serve: Serve the documentation site locally. Default port is 8001
+##             (the txn2 docs already use 8000); override with DOCS_PORT.
+##             Bind address can be overridden with DOCS_HOST.
+DOCS_HOST ?= 127.0.0.1
+DOCS_PORT ?= 8001
 docs-serve:
-	mkdocs serve
+	mkdocs serve -a $(DOCS_HOST):$(DOCS_PORT)
 
 ## run: Build and run
 run: build
