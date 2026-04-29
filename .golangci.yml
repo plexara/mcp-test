@@ -55,12 +55,26 @@ linters:
     rules:
       # Test files exercise edge cases; allow targeted noise that would be
       # wrong in production but is fine in tests. (Other linters still run
-      # against tests so we catch real bugs there.)
+      # against tests so we catch real bugs there.) Specifically:
+      #   - bodyclose: tests run for a few ms; resource leaks are a non-issue.
+      #   - revive: var-naming nits like fakeIdP vs fakeIDP don't matter in
+      #     test fixtures.
+      #   - staticcheck: stylistic suggestions like QF1008 (drop embedded
+      #     selector) shouldn't gate test code.
+      #   - unparam: helpers built generically but called with one arg are
+      #     normal in tests.
+      #   - unused: helpers shared across one of several tests file may
+      #     read as unused per-package.
       - path: _test\.go
         linters:
           - gosec
           - gocritic
           - errcheck
+          - bodyclose
+          - revive
+          - staticcheck
+          - unparam
+          - unused
 
 issues:
   max-issues-per-linter: 0

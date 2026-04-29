@@ -71,6 +71,8 @@ func runHealthcheck() error {
 		url = "http://127.0.0.1:8080/healthz"
 	}
 	client := &http.Client{Timeout: 3 * time.Second}
+	// #nosec G107 G704 -- URL is from a trusted env var the operator sets;
+	// this is a self-probe of the binary's own health endpoint.
 	resp, err := client.Get(url)
 	if err != nil {
 		return fmt.Errorf("healthcheck: %w", err)

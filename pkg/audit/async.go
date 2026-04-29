@@ -71,20 +71,27 @@ func (a *AsyncLogger) Log(_ context.Context, ev Event) error {
 	return nil
 }
 
-// Query / Count / TimeSeries / Breakdown / Stats delegate straight through;
-// reads don't need buffering.
+// Query delegates to the inner Logger; reads don't need buffering.
 func (a *AsyncLogger) Query(ctx context.Context, f QueryFilter) ([]Event, error) {
 	return a.inner.Query(ctx, f)
 }
+
+// Count delegates to the inner Logger.
 func (a *AsyncLogger) Count(ctx context.Context, f QueryFilter) (int64, error) {
 	return a.inner.Count(ctx, f)
 }
+
+// TimeSeries delegates to the inner Logger.
 func (a *AsyncLogger) TimeSeries(ctx context.Context, from, to time.Time, bucket time.Duration) ([]TimePoint, error) {
 	return a.inner.TimeSeries(ctx, from, to, bucket)
 }
+
+// Breakdown delegates to the inner Logger.
 func (a *AsyncLogger) Breakdown(ctx context.Context, from, to time.Time, dim string) ([]BreakdownPoint, error) {
 	return a.inner.Breakdown(ctx, from, to, dim)
 }
+
+// Stats delegates to the inner Logger.
 func (a *AsyncLogger) Stats(ctx context.Context, from, to time.Time) (Stats, error) {
 	return a.inner.Stats(ctx, from, to)
 }
@@ -133,17 +140,28 @@ func (a *AsyncLogger) write(ev Event) {
 // NoopLogger is a Logger that drops everything. Used when audit.enabled=false.
 type NoopLogger struct{}
 
+// Log discards the event.
 func (NoopLogger) Log(context.Context, Event) error { return nil }
+
+// Query returns no events.
 func (NoopLogger) Query(context.Context, QueryFilter) ([]Event, error) {
 	return nil, nil
 }
+
+// Count returns 0.
 func (NoopLogger) Count(context.Context, QueryFilter) (int64, error) { return 0, nil }
+
+// TimeSeries returns no points.
 func (NoopLogger) TimeSeries(context.Context, time.Time, time.Time, time.Duration) ([]TimePoint, error) {
 	return nil, nil
 }
+
+// Breakdown returns no points.
 func (NoopLogger) Breakdown(context.Context, time.Time, time.Time, string) ([]BreakdownPoint, error) {
 	return nil, nil
 }
+
+// Stats returns zeroed stats.
 func (NoopLogger) Stats(context.Context, time.Time, time.Time) (Stats, error) {
 	return Stats{}, nil
 }
