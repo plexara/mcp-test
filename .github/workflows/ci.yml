@@ -48,7 +48,9 @@ jobs:
         run: ./scripts/coverage-gate.sh coverage.out 80
 
       - name: Lint
-        uses: golangci/golangci-lint-action@v6
+        # v7 of the action is required for golangci-lint v2; v6 only
+        # understands v1.* version strings.
+        uses: golangci/golangci-lint-action@v7
         with:
           version: v2.11.4
           args: --timeout=5m
