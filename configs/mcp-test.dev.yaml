@@ -1,0 +1,43 @@
+# Development config. Brings up against the bundled docker-compose stack
+# (postgres + keycloak). Allows anonymous so curl smoke tests work without
+# arranging credentials.
+
+server:
+  name: mcp-test
+  address: ":8080"
+  base_url: "http://localhost:8080"
+  streamable:
+    session_timeout: 30m
+
+oidc:
+  enabled: false
+
+api_keys:
+  file:
+    - name: dev-local
+      key: "${MCPTEST_DEV_KEY}"
+      description: "local dev key"
+  db:
+    enabled: true
+
+auth:
+  allow_anonymous: true
+  require_for_mcp: false
+  require_for_portal: false
+
+database:
+  url: "${MCPTEST_DATABASE_URL:-postgres://mcp:mcp@localhost:5432/mcp_test?sslmode=disable}"
+
+audit:
+  enabled: true
+
+portal:
+  enabled: true
+  cookie_secret: "${MCPTEST_COOKIE_SECRET}"
+  cookie_secure: false
+
+tools:
+  identity:  { enabled: true }
+  data:      { enabled: true }
+  failure:   { enabled: true }
+  streaming: { enabled: true }

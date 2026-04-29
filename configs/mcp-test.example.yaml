@@ -1,0 +1,75 @@
+# mcp-test reference configuration. Copy to mcp-test.yaml and edit.
+#
+# Env vars are interpolated with ${VAR} or ${VAR:-default}. Plain $VAR is left
+# untouched (so Postgres DSNs etc. round-trip).
+
+server:
+  name: mcp-test
+  address: ":${MCPTEST_PORT:-8080}"
+  base_url: "${MCPTEST_BASE_URL:-http://localhost:8080}"
+  # Instructions are returned to MCP clients in the initialize response and
+  # most clients surface them to the LLM as system context. Leave empty to
+  # use the project default; set to "" explicitly to suppress.
+  # instructions: |
+  #   Custom server-level prose describing what this deployment is for and
+  #   how the LLM should treat it.
+  read_header_timeout: 10s
+  shutdown:
+    grace_period: 25s
+    pre_shutdown_delay: 2s
+  tls:
+    enabled: false
+    cert_file: ""
+    key_file: ""
+  streamable:
+    session_timeout: 30m
+    stateless: false
+    json_response: false
+
+oidc:
+  enabled: false
+  issuer: "${MCPTEST_OIDC_ISSUER:-}"
+  audience: "${MCPTEST_OIDC_AUDIENCE:-mcp-test}"
+  client_id: "${MCPTEST_OIDC_CLIENT_ID:-mcp-test-portal}"
+  client_secret: "${MCPTEST_OIDC_CLIENT_SECRET:-}"
+  allowed_clients: []
+  clock_skew_seconds: 30
+  jwks_cache_ttl: 1h
+  skip_signature_verification: false
+
+api_keys:
+  file:
+    - name: dev-local
+      key: "${MCPTEST_DEV_KEY:-}"
+      description: "local dev only; set MCPTEST_DEV_KEY to enable"
+  db:
+    enabled: true
+
+auth:
+  allow_anonymous: false
+  require_for_mcp: true
+  require_for_portal: true
+
+database:
+  url: "${MCPTEST_DATABASE_URL:-postgres://mcp:mcp@localhost:5432/mcp_test?sslmode=disable}"
+  max_open_conns: 25
+  max_idle_conns: 5
+  conn_max_lifetime: 1h
+
+audit:
+  enabled: true
+  retention_days: 30
+  redact_keys: [password, token, secret, authorization, api_key, credentials, cookie]
+
+portal:
+  enabled: true
+  cookie_name: mcp_test_session
+  cookie_secret: "${MCPTEST_COOKIE_SECRET:-}"
+  cookie_secure: true
+  oidc_redirect_path: /portal/auth/callback
+
+tools:
+  identity:  { enabled: true }
+  data:      { enabled: true }
+  failure:   { enabled: true }
+  streaming: { enabled: true }

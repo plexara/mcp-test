@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>mcp-test portal</title>
+    <script>
+      // Avoid the light-flash on dark systems by applying the .dark class
+      // before any stylesheet loads. The theme store re-applies the same
+      // logic on import.
+      (function () {
+        try {
+          var s = localStorage.getItem("mcp-test-theme") || "system";
+          var dark = s === "dark" || (s === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+          if (dark) document.documentElement.classList.add("dark");
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

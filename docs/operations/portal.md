@@ -1,0 +1,140 @@
+---
+title: Portal
+description: The embedded React 19 portal: Login, Dashboard, Tools (with Try-It), Audit, API Keys, Config, Discovery, About. Light and dark themes.
+---
+
+# Portal
+
+The portal is a React 19 SPA mounted at `/portal/`, served from the
+binary via `go:embed all:dist`. There's no separate frontend server.
+
+## Routes
+
+| Route | What |
+| --- | --- |
+| `/portal/login` | Sign in with OIDC or paste an API key. |
+| `/portal/` | Dashboard: 1-hour stats and recent activity. |
+| `/portal/tools` | Tool catalog grouped by category. |
+| `/portal/tools/<name>` | Per-tool detail with Overview / Try It tabs. |
+| `/portal/audit` | Filterable event browser with pagination. |
+| `/portal/keys` | DB-backed API key management. |
+| `/portal/config` | Read-only JSON view of the running config (secrets redacted). |
+| `/portal/wellknown` | Pretty-print of the protected-resource and authorization-server metadata that gateways read. |
+| `/portal/about` | Description of the server, the categories, and the live `server.instructions`. |
+
+## Authentication
+
+Two paths:
+
+1. **OIDC**: click "Sign in with OIDC" on the login screen. Standard
+   PKCE flow; on completion the portal sets an HMAC-signed session
+   cookie carrying the resolved Identity.
+2. **API key**: paste any valid API key (file or DB store). The SPA
+   stores it in `sessionStorage` and adds it as `X-API-Key` to every
+   API call. No server-side state.
+
+Sign out clears both: the cookie is removed via
+`POST /portal/auth/logout` and the API key is deleted from
+sessionStorage.
+
+## Theme
+
+Light / dark / system, toggleable from the sidebar footer
+(sun / moon / monitor icons). The choice persists in localStorage.
+Dark mode follows the OS by default and reacts to live OS theme
+changes.
+
+The theme system uses HSL CSS variables for the color tokens; light
+and dark schemes share the same variable names with different values.
+A small inline script in `index.html` applies the `.dark` class to
+`<html>` before stylesheets load to avoid the classic light-flash on
+dark systems.
+
+## Try It
+
+The Tools page's **Try It** tab renders a per-tool form: sliders for
+range-bounded numbers, dropdowns for enums, toggles for booleans,
+JSON textareas for free-form payloads, and inline help text. Each
+form is hand-tuned for the tool, not derived from JSON schema; see
+`ui/src/components/ToolForm.tsx` for the declarative spec.
+
+Submitting calls `POST /api/v1/admin/tryit/<name>`, which:
+
+1. Verifies the portal-authenticated identity.
+2. Connects to the in-process MCP server via in-memory transport.
+3. Calls the tool.
+4. Writes a `source=portal-tryit` audit row tagged with the
+   user's identity.
+
+Audit rows from Try-It show up in the same audit log alongside
+real client calls, distinguishable by the `source` column.
+
+## API Keys
+
+Create, list, and revoke entries in the bcrypt-hashed
+`api_keys` Postgres table.
+
+Creating a key returns the plaintext **once**. Copy it immediately;
+the server never stores it in cleartext.
+
+Deleting a key immediately revokes it for all callers — the auth
+chain re-queries on every request, so there's no cache to invalidate.
+
+## Config viewer
+
+Read-only JSON of the live, post-defaults config. Secrets
+(`portal.cookie_secret`, `oidc.client_secret`, file API key values,
+the database password segment of the DSN) are replaced with
+`[redacted]` before serialization.
+
+Useful for confirming what the running binary is actually using when
+you're not sure what env vars the deployment manifest set.
+
+## Discovery
+
+The Discovery tab pretty-prints
+`/.well-known/oauth-protected-resource` and
+`/.well-known/oauth-authorization-server` so you can see exactly what
+an MCP gateway will discover when it points at this server. Useful
+when debugging gateway misconfiguration.
+
+## About
+
+The About tab describes what mcp-test is, what each tool category is
+for, and the live `server.instructions` text the MCP server returns
+to clients at initialize time. Useful for confirming what your model
+is being told.
+
+## Disabling
+
+To not ship the portal at all:
+
+```yaml
+portal:
+  enabled: false
+```
+
+The `/portal/*`, `/api/v1/portal/*`, `/api/v1/admin/*`, and
+`/portal/auth/*` routes are simply not mounted. The MCP `/` endpoint
+keeps working.
+
+## Building
+
+The SPA build pipeline:
+
+```bash
+make ui      # cd ui && pnpm install && pnpm build → ui/dist
+             # then copy ui/dist → internal/ui/dist
+```
+
+`make build` does not build the SPA; run `make ui` first if you need
+the portal in the binary. CI and the release pipeline always build
+the SPA.
+
+For SPA development with live reload:
+
+```bash
+make ui-dev    # vite dev server on :5173, proxies /api to :8080
+```
+
+(You also need the binary running on `:8080`, e.g. `make dev-anon`.)

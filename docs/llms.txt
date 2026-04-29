@@ -1,0 +1,50 @@
+# mcp-test
+
+> A controllable Model Context Protocol (MCP) server, built specifically as a fixture for testing MCP gateways end-to-end. Twelve deterministic test tools across four categories, three real auth methods (file API keys, Postgres-backed bcrypt keys, OIDC), and a Postgres-backed audit log of every tool call. Open source by Plexara under Apache 2.0.
+
+The server itself is small and predictable on purpose; the value is the surface it gives a gateway operator to assert on. Same input always produces the same output. Failures happen exactly when asked. Every call lands in an audit log the embedded React portal can browse, filter, and chart.
+
+## Getting started
+
+- [Overview](https://mcp-test.plexara.io/getting-started/overview/): What mcp-test is, who should use it, and why a separate test server matters.
+- [Installation](https://mcp-test.plexara.io/getting-started/installation/): Binary download, container image (GHCR), `go install`, building from source.
+- [Quickstart](https://mcp-test.plexara.io/getting-started/quickstart/): `make dev` brings up Postgres, Keycloak, and the binary in under five minutes.
+- [Connect a client](https://mcp-test.plexara.io/getting-started/connect-client/): Wiring Claude Code, raw HTTP/JSON-RPC, and the official Go SDK to a running mcp-test instance.
+
+## Configuration
+
+- [YAML reference](https://mcp-test.plexara.io/configuration/reference/): Every config key with default value and environment-variable override.
+- [Environment variables](https://mcp-test.plexara.io/configuration/environment/): `MCPTEST_*` variables and how they map onto the YAML.
+- [Authentication](https://mcp-test.plexara.io/configuration/auth/): File API keys, Postgres-backed bcrypt keys, and external OIDC delegation. RFC 9728 protected-resource metadata for client discovery.
+- [Database and migrations](https://mcp-test.plexara.io/configuration/database/): Postgres connection settings; migrations run on boot via golang-migrate.
+- [Server instructions](https://mcp-test.plexara.io/configuration/instructions/): The MCP `initialize` response carries server-level instructions clients surface to the LLM as system context, telling models these tools are test fixtures.
+
+## Tools
+
+mcp-test ships 12 tools across 4 categories. Each is a thin, deterministic shim designed to expose one specific gateway behavior.
+
+- [Tools overview](https://mcp-test.plexara.io/tools/overview/): Catalog and the determinism contract.
+- [Identity](https://mcp-test.plexara.io/tools/identity/): `whoami`, `echo`, `headers`. Verify identity and header pass-through.
+- [Data](https://mcp-test.plexara.io/tools/data/): `fixed_response`, `sized_response`, `lorem`. Seeded for deterministic reproducibility; same input gives the same output forever.
+- [Failure modes](https://mcp-test.plexara.io/tools/failure/): `error`, `slow`, `flaky`. Controlled error categories, latency injection, seeded flake rates.
+- [Streaming](https://mcp-test.plexara.io/tools/streaming/): `progress`, `long_output`, `chatty`. Progress notifications, chunked streams, multi-block content.
+
+## Operations
+
+- [Audit log](https://mcp-test.plexara.io/operations/audit/): Postgres schema, retention, redaction, and the JSON shape returned by the portal API.
+- [Portal](https://mcp-test.plexara.io/operations/portal/): React 19 SPA embedded into the binary; pages, Try-It proxy, dashboard.
+- [Deployment](https://mcp-test.plexara.io/operations/deployment/): Docker, Kubernetes, distroless image, healthcheck, graceful shutdown.
+- [Testing a gateway](https://mcp-test.plexara.io/operations/gateway-testing/): Patterns for asserting on a gateway's identity-forwarding, redaction, enrichment, and progress-pass-through using mcp-test as the upstream.
+
+## Reference
+
+- [HTTP API](https://mcp-test.plexara.io/reference/http-api/): Portal read endpoints (`/api/v1/portal/*`) and admin endpoints (`/api/v1/admin/*`).
+- [MCP protocol](https://mcp-test.plexara.io/reference/mcp/): Streamable HTTP transport, session lifecycle, headers and progress notifications.
+- [Architecture](https://mcp-test.plexara.io/reference/architecture/): Component diagram, request flow, audit pipeline, embed model.
+- [Releases](https://mcp-test.plexara.io/reference/releases/): Version policy, container image tags, migration notes.
+
+## Optional
+
+- [Source on GitHub](https://github.com/plexara/mcp-test): Apache 2.0; issues and PRs welcome.
+- [Container image](https://github.com/plexara/mcp-test/pkgs/container/mcp-test): GHCR multi-arch images, signed via cosign on tag.
+- [Plexara](https://plexara.io): The commercial MCP server with configurable enrichment built in. mcp-test is what we use to verify Plexara's gateway behavior end-to-end; we ship it as OSS so anyone building MCP integrations can use the same fixture.

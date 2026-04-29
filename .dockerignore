@@ -1,0 +1,42 @@
+# Build artifacts
+bin/
+dist/
+linux/
+site/
+coverage.*
+*.coverprofile
+*.test
+*.out
+
+# Node + UI build outputs (UI is built inside the Dockerfile when needed,
+# or pre-embedded into internal/ui/dist by GoReleaser).
+**/node_modules/
+ui/dist/
+internal/ui/dist/
+
+# Docs (not needed in the runtime image; deployed separately to GH Pages)
+docs/
+mkdocs.yml
+
+# Repo metadata
+.git/
+.github/
+.gitignore
+.gitattributes
+.golangci.yml
+.goreleaser.yml
+.editorconfig
+
+# Local env files (never bake into an image)
+.env
+.env.*
+!.env.example
+
+# IDE / OS noise
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Local screenshot tooling
+scripts/screenshots/node_modules/

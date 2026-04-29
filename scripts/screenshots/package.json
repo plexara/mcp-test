@@ -1,0 +1,14 @@
+{
+  "name": "mcp-test-screenshots",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Playwright-driven screenshot capture for the mcp-test portal. Run via `make screenshots`.",
+  "scripts": {
+    "capture": "node screenshots.mjs"
+  },
+  "dependencies": {
+    "pg": "^8.13.1",
+    "playwright": "^1.49.1"
+  }
+}

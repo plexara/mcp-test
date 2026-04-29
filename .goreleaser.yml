@@ -1,0 +1,150 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+# vim: set ts=2 sw=2 tw=0 fo=cnqoj
+#
+# GoReleaser config for mcp-test. Publishes binaries to GitHub Releases
+# and multi-arch container images to GHCR. Cosign keyless signing and
+# SBOM generation are wired through via the release.yml workflow's
+# id-token: write permission.
+
+version: 2
+
+project_name: mcp-test
+
+env:
+  - GO111MODULE=on
+
+before:
+  hooks:
+    - go mod download
+    - go mod verify
+    # Build the React SPA into internal/ui/dist so the embedded UI is in
+    # every shipped binary. Skipped if ui/ is missing (pure-binary builds).
+    - bash -c "if [ -f ui/package.json ]; then cd ui && (corepack enable && pnpm install --frozen-lockfile && pnpm build || npm install && npm run build) && rm -rf ../internal/ui/dist && cp -R dist ../internal/ui/dist; fi"
+
+builds:
+  - id: mcp-test
+    main: ./cmd/mcp-test
+    binary: mcp-test
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+    mod_timestamp: '{{ .CommitTimestamp }}'
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+      - -a
+    ldflags:
+      - -s -w
+      - -X github.com/plexara/mcp-test/pkg/build.Version={{.Version}}
+      - -X github.com/plexara/mcp-test/pkg/build.Commit={{.ShortCommit}}
+      - -X github.com/plexara/mcp-test/pkg/build.Date={{.Date}}
+
+archives:
+  - id: default
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- .Arch }}
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: 'checksums.txt'
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+      - '^build:'
+      - Merge pull request
+      - Merge branch
+  groups:
+    - title: Features
+      regexp: '^feat'
+      order: 0
+    - title: Bug Fixes
+      regexp: '^fix'
+      order: 1
+    - title: Security
+      regexp: '^security'
+      order: 2
+    - title: Others
+      order: 999
+
+# Multi-arch container image to GHCR.
+dockers_v2:
+  - id: scratch
+    dockerfile: Dockerfile
+    ids:
+      - mcp-test
+    images:
+      - ghcr.io/plexara/mcp-test
+    tags:
+      - latest
+      - "{{ .Tag }}"
+      - "v{{ .Major }}"
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    labels:
+      org.opencontainers.image.created: "{{ .Date }}"
+      org.opencontainers.image.title: "{{ .ProjectName }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.source: "{{ .GitURL }}"
+      org.opencontainers.image.description: "A controllable Model Context Protocol server for testing MCP gateways"
+      org.opencontainers.image.licenses: "Apache-2.0"
+      org.opencontainers.image.vendor: "Plexara"
+      org.opencontainers.image.url: "https://mcp-test.plexara.io"
+
+release:
+  github:
+    owner: plexara
+    name: mcp-test
+  name_template: "{{.ProjectName}}-v{{.Version}}"
+  prerelease: auto
+  mode: append
+  footer: |
+    ## Installation
+
+    ### Container
+
+    ```bash
+    docker pull ghcr.io/plexara/mcp-test:{{ .Tag }}
+    ```
+
+    ### Binary (macOS / Linux)
+
+    ```bash
+    curl -L -o mcp-test.tar.gz \
+      https://github.com/plexara/mcp-test/releases/download/{{ .Tag }}/mcp-test_{{ .Version }}_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz
+    tar -xzf mcp-test.tar.gz
+    ./mcp-test --version
+    ```
+
+    ### Documentation
+
+    Full docs at <https://mcp-test.plexara.io>.
+
+    Open source by [Plexara](https://plexara.io), the commercial MCP server with configurable enrichment built in.

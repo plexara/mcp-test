@@ -1,0 +1,42 @@
+# syntax=docker/dockerfile:1
+#
+# Dockerfile for compose / local development. Builds the SPA, builds the
+# Go binary, and ships it in a distroless static image. Slower than the
+# goreleaser-shaped Dockerfile (which expects a pre-built binary), but
+# self-contained: `docker compose build` Just Works.
+
+FROM node:22-alpine AS ui
+WORKDIR /src/ui
+COPY ui/package.json ui/pnpm-lock.yaml ./
+RUN corepack enable && pnpm install --frozen-lockfile
+COPY ui/ ./
+RUN pnpm build
+
+FROM golang:1.26-alpine AS build
+WORKDIR /src
+RUN apk add --no-cache git ca-certificates
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+COPY --from=ui /src/ui/dist /src/internal/ui/dist
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG DATE=unknown
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -ldflags "-s -w -X github.com/plexara/mcp-test/pkg/build.Version=${VERSION} -X github.com/plexara/mcp-test/pkg/build.Commit=${COMMIT} -X github.com/plexara/mcp-test/pkg/build.Date=${DATE}" \
+    -o /out/mcp-test ./cmd/mcp-test
+
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY --from=build /out/mcp-test /usr/local/bin/mcp-test
+COPY configs/mcp-test.example.yaml /app/configs/mcp-test.yaml
+
+USER nonroot:nonroot
+EXPOSE 8080
+
+# Distroless has no shell so we use the binary itself for healthcheck.
+# /healthz returns 200 from the unauthenticated health endpoint.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD ["/usr/local/bin/mcp-test", "--healthcheck"] || exit 1
+
+ENTRYPOINT ["/usr/local/bin/mcp-test"]
+CMD ["--config", "/app/configs/mcp-test.yaml"]

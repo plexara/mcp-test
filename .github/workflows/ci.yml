@@ -1,0 +1,67 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel in-flight runs for the same ref so a fast-pushing branch doesn't
+# stack queue depth.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Restrict the GITHUB_TOKEN to read-only on CI; release.yml grants
+# packages:write separately.
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: lint + test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.2"
+          cache: true
+
+      - name: Verify go.mod is tidy
+        run: |
+          go mod tidy
+          if ! git diff --quiet go.mod go.sum; then
+            echo "go.mod / go.sum are out of date; run 'go mod tidy' locally" >&2
+            git diff go.mod go.sum
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test (with race detector)
+        run: go test -race -count=1 -coverprofile=coverage.out ./...
+
+      - name: Coverage gate
+        run: ./scripts/coverage-gate.sh coverage.out 80
+
+      - name: Lint
+        # v7 of the action is required for golangci-lint v2; v6 only
+        # understands v1.* version strings.
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.11.4
+          args: --timeout=5m
+
+      - name: gosec
+        run: |
+          go install github.com/securego/gosec/v2/cmd/gosec@v2.25.0
+          gosec -quiet ./...
+        continue-on-error: true   # advisory; security findings are tracked separately
+
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...

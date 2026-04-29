@@ -1,0 +1,148 @@
+site_name: mcp-test
+# Trailing slash matters: it's used as a prefix in OG/Twitter card URLs
+# and in JSON-LD, where doubling-up "//" breaks tools that don't normalize.
+site_url: https://mcp-test.plexara.io/
+site_description: >-
+  mcp-test is a controllable Model Context Protocol (MCP) server, built
+  specifically as a fixture for testing MCP gateways. Twelve deterministic
+  test tools, three real auth methods, a Postgres-backed audit log of every
+  call, and an embedded React portal. Open source by Plexara, Apache 2.0.
+site_author: Plexara
+repo_url: https://github.com/plexara/mcp-test
+repo_name: plexara/mcp-test
+edit_uri: edit/main/docs/
+
+copyright: Copyright &copy; 2026 Plexara
+
+theme:
+  name: material
+  custom_dir: docs/overrides
+  logo: images/logo.svg
+  favicon: images/logo.svg
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  font: false
+  icon:
+    repo: fontawesome/brands/github
+  features:
+    - navigation.instant
+    - navigation.instant.progress
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - search.suggest
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - content.action.edit
+    - toc.follow
+    - announce.dismiss
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Overview: getting-started/overview.md
+      - Installation: getting-started/installation.md
+      - Quickstart: getting-started/quickstart.md
+      - Connect a Client: getting-started/connect-client.md
+  - Configuration:
+      - YAML Reference: configuration/reference.md
+      - Environment Variables: configuration/environment.md
+      - Authentication: configuration/auth.md
+      - Database & Migrations: configuration/database.md
+      - Server Instructions: configuration/instructions.md
+  - Tools:
+      - Overview: tools/overview.md
+      - Identity: tools/identity.md
+      - Data: tools/data.md
+      - Failure Modes: tools/failure.md
+      - Streaming: tools/streaming.md
+  - Operations:
+      - Audit Log: operations/audit.md
+      - Portal: operations/portal.md
+      - Deployment: operations/deployment.md
+      - Testing a Gateway: operations/gateway-testing.md
+  - Reference:
+      - HTTP API: reference/http-api.md
+      - MCP Protocol: reference/mcp.md
+      - Architecture: reference/architecture.md
+      - Releases: reference/releases.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/plexara/mcp-test
+      name: mcp-test on GitHub
+    - icon: fontawesome/solid/globe
+      link: https://plexara.io
+      name: Plexara
+  generator: false
+
+extra_css:
+  - stylesheets/extra.css
+
+extra_javascript:
+  - javascripts/shots.js
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      toc_depth: 3
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.magiclink:
+      repo_url_shorthand: true
+      user: plexara
+      repo: mcp-test
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+plugins:
+  - search:
+      separator: '[\s\-,:!=\[\]()"`/]+|\.(?!\d)|&[lg]t;|(?!\b)(?=[A-Z][a-z])'
