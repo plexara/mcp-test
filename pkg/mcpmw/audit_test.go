@@ -90,11 +90,38 @@ func TestExtractCallParams(t *testing.T) {
 		t.Errorf("args = %+v", args)
 	}
 
+	// CallToolParamsRaw path: JSON bytes get unmarshalled.
+	req3 := &mcp.ServerRequest[*mcp.CallToolParamsRaw]{
+		Params: &mcp.CallToolParamsRaw{Name: "raw", Arguments: []byte(`{"x":42}`)},
+	}
+	name3, args3 := extractCallParams(req3)
+	if name3 != "raw" {
+		t.Errorf("raw name = %q", name3)
+	}
+	if v, _ := args3["x"].(float64); v != 42 {
+		t.Errorf("raw args = %+v", args3)
+	}
+
 	// Unknown params type returns empty name.
 	req2 := &mcp.ServerRequest[*mcp.PingParams]{Params: &mcp.PingParams{}}
 	name2, args2 := extractCallParams(req2)
 	if name2 != "" || args2 != nil {
 		t.Errorf("unexpected params parse: name=%q args=%v", name2, args2)
+	}
+}
+
+func TestSessionID_NilRequest(t *testing.T) {
+	// A request that returns nil from GetSession should produce empty ID.
+	req := &mcp.ServerRequest[*mcp.PingParams]{Params: &mcp.PingParams{}}
+	if got := sessionID(req); got != "" {
+		t.Errorf("sessionID = %q, want empty", got)
+	}
+}
+
+func TestUserAgent_NoExtra(t *testing.T) {
+	req := &mcp.ServerRequest[*mcp.PingParams]{Params: &mcp.PingParams{}}
+	if got := userAgent(req); got != "" {
+		t.Errorf("userAgent on no-extra = %q, want empty", got)
 	}
 }
 

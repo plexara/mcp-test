@@ -138,15 +138,17 @@ govulncheck:
 ## security: gosec + govulncheck
 security: gosec govulncheck
 
-# Coverage gate floor. Set to where the codebase actually is so verify
-# stays green; ratchet upward as new tests land. Override with
-# `make verify COVERAGE_MIN=80` to enforce the long-term target.
-COVERAGE_MIN ?= 50
+COVERAGE_MIN ?= 80
 
-## coverage: Run tests with cross-package coverage profile (-coverpkg=./...)
+## coverage: Run tests and produce a per-package coverage profile.
+##            Each package contributes coverage for its own statements;
+##            cross-package union is intentionally NOT used here because
+##            -coverpkg=./... interacts poorly with `go test ./...` profile
+##            merging in this Go version, producing fractional coverage
+##            entries for packages under test.
 coverage:
 	@echo "Running coverage..."
-	$(GOTEST) -race -coverpkg=./... -coverprofile=coverage.out -covermode=atomic ./...
+	$(GOTEST) -race -coverprofile=coverage.out -covermode=atomic ./...
 	@$(GO) tool cover -func=coverage.out | tail -1
 
 ## coverage-gate: Fail if coverage of testable packages is below COVERAGE_MIN (default 80)

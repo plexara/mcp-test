@@ -45,8 +45,7 @@ jobs:
         run: go test -race -count=1 -coverprofile=coverage.out ./...
 
       - name: Coverage gate
-        # Match Makefile COVERAGE_MIN default. Ratchet upward as tests land.
-        run: ./scripts/coverage-gate.sh coverage.out 50
+        run: ./scripts/coverage-gate.sh coverage.out 80
 
       - name: Lint
         uses: golangci/golangci-lint-action@v6
