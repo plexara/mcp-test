@@ -40,3 +40,6 @@ go.work.sum
 
 # Local Claude Code per-machine settings
 .claude/
+
+# TypeScript incremental build cache
+*.tsbuildinfo
