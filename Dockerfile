@@ -16,9 +16,14 @@ COPY --from=certs /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certifica
 ARG TARGETARCH
 COPY linux/${TARGETARCH}/mcp-test /usr/local/bin/mcp-test
 
-# Bundle the example config so a docker run without a mounted config
-# still has something to point at.
-COPY configs/mcp-test.example.yaml /app/configs/mcp-test.yaml
+# No config is baked in. Operators mount one (or use env vars):
+#
+#   docker run --rm \
+#     -v $(pwd)/mcp-test.yaml:/app/configs/mcp-test.yaml:ro \
+#     ghcr.io/plexara/mcp-test:latest
+#
+# A starter config to copy from lives in the source tree at
+# configs/mcp-test.example.yaml on the GitHub repo.
 
 # Non-root (scratch has no /etc/passwd; numeric IDs only).
 USER 1000:1000
