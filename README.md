@@ -100,3 +100,10 @@ tests/           # in-memory + HTTP + portal + SPA + integration (build-tagged)
 ## License
 
 [Apache 2.0](LICENSE).
+
+---
+
+Open source by [Plexara](https://plexara.io), the commercial MCP server with
+configurable enrichment built in. mcp-test is what Plexara uses to verify its
+gateway behavior end-to-end; it ships as OSS so anyone building MCP
+integrations can use the same fixture.
