@@ -1,0 +1,67 @@
+# golangci-lint config for mcp-test (schema v2).
+#
+# Aim: fail-fast on real bugs and questionable style without being precious.
+# Adjust as the codebase grows. Run with `golangci-lint run` (Makefile: `make lint`).
+
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - errorlint
+    - govet
+    - ineffassign
+    - misspell
+    - revive
+    - staticcheck
+    - unparam
+    - unused
+    - gocritic
+    - gosec
+    - bodyclose
+    - rowserrcheck
+    - sqlclosecheck
+    - nilerr
+    - prealloc
+    - copyloopvar
+    - nolintlint
+
+  settings:
+    revive:
+      rules:
+        - name: var-naming
+        - name: package-comments
+        - name: exported
+          arguments:
+            - disableStutteringCheck
+        - name: error-naming
+        - name: error-strings
+        - name: receiver-naming
+        - name: empty-block
+        - name: superfluous-else
+        - name: unused-parameter
+          disabled: true
+    gosec:
+      excludes:
+        - G104   # audited explicit ignores in non-critical paths (defer Close, etc.)
+        - G304   # config paths come from operator-supplied flags
+
+  exclusions:
+    paths:
+      - ".*_test\\.go$"
+    rules:
+      # Test files exercise edge cases; allow noise that would be wrong in production.
+      - path: _test\.go
+        linters:
+          - gosec
+          - gocritic
+          - errcheck
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

@@ -1,0 +1,273 @@
+# mcp-test Makefile
+#
+# Common targets:
+#   make build        # build the binary into ./bin/mcp-test
+#   make ui           # build the React SPA into internal/ui/dist (embedded by build)
+#   make test         # go test -race -count=1
+#   make verify       # full CI-equivalent: tools-check, fmt, vet, embed-clean, test, lint, security, coverage
+#   make dev          # postgres in compose + go run with live config
+#
+# Run `make help` to see every target.
+
+SHELL := /bin/bash
+
+BINARY_NAME := mcp-test
+
+# Resolve VERSION to the latest annotated/lightweight git tag (e.g. v1.2.3),
+# falling back to v0.0.0 when no tag exists yet. Append "-dirty" if the
+# working tree has uncommitted changes.
+VERSION    ?= $(shell \
+    tag=$$(git describe --tags --abbrev=0 2>/dev/null || echo v0.0.0); \
+    git diff --quiet HEAD -- 2>/dev/null && echo $$tag || echo $$tag-dirty)
+GIT_SHA    ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
+BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+
+LDFLAGS := -ldflags "-X github.com/plexara/mcp-test/pkg/build.Version=$(VERSION) \
+                     -X github.com/plexara/mcp-test/pkg/build.Commit=$(GIT_SHA) \
+                     -X github.com/plexara/mcp-test/pkg/build.Date=$(BUILD_DATE)"
+
+CMD_DIR      := ./cmd/mcp-test
+BUILD_DIR    := ./bin
+UI_DIR       := ./ui
+UI_EMBED_DIR := ./internal/ui/dist
+
+# Pinned tool versions; keep in sync with .github/workflows/ci.yml.
+GOLANGCI_LINT_VERSION := v2.11.4
+GOSEC_VERSION         := v2.25.0
+
+GO       := go
+GOTEST   := $(GO) test
+GOBUILD  := $(GO) build
+GOMOD    := $(GO) mod
+GOFMT    := gofmt
+GOLINT   := golangci-lint
+
+.PHONY: all build test test-short bench fmt fmt-check vet tidy clean help \
+        ui ui-dev ui-clean embed-clean \
+        lint security gosec govulncheck \
+        coverage coverage-gate coverage-report \
+        dead-code mutate semgrep \
+        verify tools-check \
+        dev dev-anon dev-up dev-wait dev-ui-if-needed dev-down dev-logs \
+        docker run version
+
+## all: Build, test, lint
+all: build test lint
+
+## build: Build the binary into ./bin/mcp-test
+build:
+	@echo "Building $(BINARY_NAME)..."
+	@mkdir -p $(BUILD_DIR)
+	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) $(CMD_DIR)
+	@echo "Binary built: $(BUILD_DIR)/$(BINARY_NAME)"
+
+## test: Run unit tests with race detector
+test:
+	@echo "Running tests..."
+	$(GOTEST) -race -count=1 ./...
+
+## test-short: Skip integration / long tests (-short)
+test-short:
+	$(GOTEST) -short -count=1 ./...
+
+## bench: Run benchmarks
+bench:
+	$(GOTEST) -run=^$$ -bench=. -benchmem ./...
+
+## fmt: Apply gofmt -s
+fmt:
+	@echo "Running gofmt..."
+	$(GOFMT) -s -w .
+
+## fmt-check: Fail if gofmt would change anything
+fmt-check:
+	@echo "Checking gofmt..."
+	@out="$$($(GOFMT) -s -l .)"; \
+	if [ -n "$$out" ]; then \
+		echo "FAIL: files need 'make fmt':"; echo "$$out"; exit 1; \
+	fi
+	@echo "gofmt clean."
+
+## vet: go vet
+vet:
+	@echo "Running go vet..."
+	$(GO) vet ./...
+
+## tidy: go mod tidy
+tidy:
+	$(GOMOD) tidy
+
+## ui: Build the SPA into internal/ui/dist for embedding
+ui:
+	@echo "Building UI..."
+	cd $(UI_DIR) && pnpm install --frozen-lockfile && pnpm build
+	@rm -rf $(UI_EMBED_DIR)
+	@cp -R $(UI_DIR)/dist $(UI_EMBED_DIR)
+	@echo "UI built and copied to $(UI_EMBED_DIR)."
+
+## ui-dev: Run Vite dev server (proxies /api to localhost:8080)
+ui-dev:
+	cd $(UI_DIR) && pnpm dev
+
+## ui-clean: Remove UI build artifacts
+ui-clean:
+	@rm -rf $(UI_DIR)/dist $(UI_DIR)/node_modules
+
+## embed-clean: Reset internal/ui/dist to .gitkeep only (matches a clean CI checkout)
+embed-clean:
+	@echo "Cleaning UI embed directory..."
+	@rm -rf $(UI_EMBED_DIR)
+	@mkdir -p $(UI_EMBED_DIR)
+	@touch $(UI_EMBED_DIR)/.gitkeep
+
+## lint: golangci-lint run
+lint:
+	@echo "Running golangci-lint..."
+	$(GOLINT) run
+
+## gosec: Static security analyzer
+gosec:
+	@echo "Running gosec..."
+	gosec -quiet ./...
+
+## govulncheck: Known-vulnerability scan
+govulncheck:
+	@echo "Running govulncheck..."
+	govulncheck ./...
+
+## security: gosec + govulncheck
+security: gosec govulncheck
+
+COVERAGE_MIN ?= 80
+
+## coverage: Run tests with cross-package coverage profile (-coverpkg=./...)
+coverage:
+	@echo "Running coverage..."
+	$(GOTEST) -race -coverpkg=./... -coverprofile=coverage.out -covermode=atomic ./...
+	@$(GO) tool cover -func=coverage.out | tail -1
+
+## coverage-gate: Fail if coverage of testable packages is below COVERAGE_MIN (default 80)
+coverage-gate: coverage
+	@./scripts/coverage-gate.sh coverage.out $(COVERAGE_MIN)
+
+## coverage-report: Print per-package coverage and flag low-coverage funcs
+coverage-report: coverage
+	@echo ""
+	@echo "=== Functions with 0% coverage (excluding postgres-dependent packages) ==="
+	@$(GO) tool cover -func=coverage.out | grep -Ev "(cmd/mcp-test|pkg/apikeys|pkg/audit/postgres|pkg/database)" | awk '{gsub(/%/,"",$$3); if ($$3+0 == 0 && $$1 != "total:") print $$0}' || true
+	@echo ""
+	@echo "=== Functions below 60% (excluding 0%) ==="
+	@$(GO) tool cover -func=coverage.out | grep -Ev "(cmd/mcp-test|pkg/apikeys|pkg/audit/postgres|pkg/database)" | awk '{gsub(/%/,"",$$3); if ($$3+0 < 60.0 && $$3+0 > 0 && $$1 != "total:") print $$0}' || true
+	@echo "=== End coverage report ==="
+
+## dead-code: Find unreachable functions (golang.org/x/tools/cmd/deadcode)
+dead-code:
+	@echo "Running deadcode..."
+	deadcode ./...
+
+## semgrep: SAST via Semgrep (Go ruleset)
+semgrep:
+	@echo "Running semgrep..."
+	semgrep scan --config p/golang --error --quiet .
+
+## mutate: Mutation testing via gremlins
+mutate:
+	@echo "Running gremlins (mutation testing)..."
+	gremlins unleash --workers 4 --tags-filter "!integration" ./...
+
+## tools-check: Verify required tools are installed before running verify
+tools-check:
+	@echo "Checking required tools..."
+	@missing=""; \
+	which $(GOLINT) > /dev/null 2>&1     || missing="$$missing  golangci-lint: go install github.com/golangci/golangci-lint/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)\n"; \
+	which gosec > /dev/null 2>&1         || missing="$$missing  gosec:         go install github.com/securego/gosec/v2/cmd/gosec@$(GOSEC_VERSION)\n"; \
+	which govulncheck > /dev/null 2>&1   || missing="$$missing  govulncheck:   go install golang.org/x/vuln/cmd/govulncheck@latest\n"; \
+	if [ -n "$$missing" ]; then \
+		echo ""; \
+		echo "FAIL: missing required tools for 'make verify':"; \
+		printf "$$missing"; \
+		echo ""; \
+		exit 1; \
+	fi
+	@echo "All required tools found."
+	@# Optional tools; warn but don't fail.
+	@which deadcode > /dev/null 2>&1 || echo "  (optional) deadcode not installed: go install golang.org/x/tools/cmd/deadcode@latest"
+	@which semgrep  > /dev/null 2>&1 || echo "  (optional) semgrep  not installed: pip3 install semgrep"
+	@which gremlins > /dev/null 2>&1 || echo "  (optional) gremlins not installed: go install github.com/go-gremlins/gremlins/cmd/gremlins@latest"
+
+## verify: Full CI-equivalent suite. Fails on any error including <80% coverage.
+verify: tools-check fmt-check vet embed-clean test lint security coverage-gate coverage-report
+	@echo ""
+	@echo "=== verify: all checks passed ==="
+
+## dev: One-command full local stack; postgres + keycloak in docker, binary in foreground.
+##      Builds the SPA into the embed dir if dist/index.html is missing so the
+##      portal renders on first run.
+dev: dev-up dev-wait dev-ui-if-needed
+	@echo ""
+	@echo "Starting mcp-test (config: configs/mcp-test.live.yaml)..."
+	@echo "  Portal:    http://localhost:8080/portal/   (sign in with dev/dev or paste API key)"
+	@echo "  MCP:       http://localhost:8080/         (X-API-Key: \$$MCPTEST_DEV_KEY or devkey-please-change)"
+	@echo "  Keycloak:  http://localhost:8081/         (admin/admin)"
+	@echo "  API key:   $${MCPTEST_DEV_KEY:-devkey-please-change}"
+	@echo ""
+	$(GO) run $(LDFLAGS) $(CMD_DIR) --config configs/mcp-test.live.yaml
+
+## dev-anon: Run anonymous-mode dev binary (no Keycloak, no auth); fastest iteration
+dev-anon:
+	docker compose -f docker-compose.dev.yml up -d postgres
+	$(GO) run $(CMD_DIR) --config configs/mcp-test.dev.yaml
+
+## dev-up: Start the dev stack (postgres + keycloak) without the binary
+dev-up:
+	docker compose -f docker-compose.dev.yml up -d postgres keycloak
+
+## dev-wait: Block until postgres and keycloak are reachable
+dev-wait:
+	@echo "Waiting for Postgres..."
+	@until docker compose -f docker-compose.dev.yml exec -T postgres pg_isready -U mcp >/dev/null 2>&1; do sleep 1; done
+	@echo "Waiting for Keycloak realm..."
+	@until curl -fs http://localhost:8081/realms/mcp-test/.well-known/openid-configuration >/dev/null 2>&1; do sleep 2; done
+	@echo "Stack ready."
+
+## dev-ui-if-needed: Build the SPA if internal/ui/dist/index.html is missing.
+dev-ui-if-needed:
+	@if [ ! -f $(UI_EMBED_DIR)/index.html ]; then \
+		$(MAKE) ui; \
+	fi
+
+## dev-down: Stop the dev stack
+dev-down:
+	docker compose -f docker-compose.dev.yml down
+
+## dev-logs: Tail compose logs
+dev-logs:
+	docker compose -f docker-compose.dev.yml logs -f --tail=100
+
+## docker: Build the docker image
+docker:
+	docker buildx build -f build/Dockerfile -t $(BINARY_NAME):$(VERSION) .
+
+## run: Build and run
+run: build
+	$(BUILD_DIR)/$(BINARY_NAME) --config configs/mcp-test.dev.yaml
+
+## clean: Remove build artifacts
+clean:
+	rm -rf $(BUILD_DIR) coverage.out coverage.html
+
+## version: Show resolved version metadata
+version:
+	@echo "Binary:     $(BINARY_NAME)"
+	@echo "Version:    $(VERSION)"
+	@echo "Commit:     $(GIT_SHA)"
+	@echo "Build date: $(BUILD_DATE)"
+	@echo "Go:         $$($(GO) version | cut -d ' ' -f 3)"
+
+## help: Show this help
+help:
+	@echo "$(BINARY_NAME) Makefile"
+	@echo ""
+	@echo "Usage: make [target]"
+	@echo ""
+	@grep -E '^## ' $(MAKEFILE_LIST) | sed 's/## /  /'
