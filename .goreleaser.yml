@@ -93,6 +93,12 @@ changelog:
       order: 999
 
 # Multi-arch container image to GHCR.
+#
+# `extra_files` augments GoReleaser's per-platform Docker build context.
+# Without it the context only contains the linux/<arch>/mcp-test binaries
+# GoReleaser stages, so the Dockerfile's `COPY configs/...` step fails
+# with "not found" at build time. We need configs/mcp-test.example.yaml
+# (the bundled default config) and the LICENSE for OCI compliance.
 dockers_v2:
   - id: scratch
     dockerfile: Dockerfile
@@ -107,6 +113,9 @@ dockers_v2:
     platforms:
       - linux/amd64
       - linux/arm64
+    extra_files:
+      - configs/mcp-test.example.yaml
+      - LICENSE
     labels:
       org.opencontainers.image.created: "{{ .Date }}"
       org.opencontainers.image.title: "{{ .ProjectName }}"
