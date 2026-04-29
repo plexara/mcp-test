@@ -1,0 +1,115 @@
+/*
+ * Plexara theme overrides for Material for MkDocs.
+ *
+ * Tracks the Plexara DESIGN.md tokens: teal/azure primary scale ("copper"),
+ * midnight neutrals, Outfit for headlines, DM Sans for body. Light scheme +
+ * dark scheme ("slate") both honored. Tokens are kept inline (not @import'd
+ * via tailwind theme) so the docs site has no JS-side dependencies beyond
+ * Material's stock bundle.
+ */
+
+@import url("https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Outfit:wght@400;500;600;700&display=swap");
+
+:root,
+[data-md-color-scheme="default"] {
+  /* Primary: Plexara teal-azure ramp (DESIGN.md "copper" alias). */
+  --md-primary-fg-color:        #0f77b2;   /* primary-800 */
+  --md-primary-fg-color--light: #149bab;   /* primary-600 */
+  --md-primary-fg-color--dark:  #0c5f8e;   /* primary-900 */
+  --md-primary-bg-color:        #ffffff;
+  --md-primary-bg-color--light: #ffffffd1;
+
+  --md-accent-fg-color:         #14b8ab;   /* primary-500 */
+  --md-accent-fg-color--transparent: #14b8ab1f;
+  --md-accent-bg-color:         #ffffff;
+  --md-accent-bg-color--light:  #ffffffd1;
+
+  /* Neutrals: midnight ramp */
+  --md-default-fg-color:        #0f172a;   /* neutral-900 */
+  --md-default-fg-color--light: #475569;   /* neutral-600 */
+  --md-default-fg-color--lighter:#94a3b8;  /* neutral-400 */
+  --md-default-fg-color--lightest:#e2e8f0; /* neutral-200 */
+  --md-default-bg-color:        #ffffff;
+
+  --md-typeset-a-color:         #0f77b2;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color:        #14b8ab;   /* primary-500 (lifted in dark) */
+  --md-primary-fg-color--light: #2dd3cb;
+  --md-primary-fg-color--dark:  #149bab;
+  --md-primary-bg-color:        #020617;
+  --md-primary-bg-color--light: #020617d1;
+
+  --md-accent-fg-color:         #2dd3cb;
+  --md-accent-fg-color--transparent: #2dd3cb1f;
+
+  --md-default-fg-color:        #f4f4f5;
+  --md-default-fg-color--light: #a1a1aa;
+  --md-default-fg-color--lighter:#71717a;
+  --md-default-fg-color--lightest:#3f3f46;
+  --md-default-bg-color:        #020617;
+  --md-default-bg-color--light: #0f172a;
+  --md-default-bg-color--lighter:#1e293b;
+
+  --md-typeset-a-color:         #2dd3cb;
+}
+
+/*
+ * Type scale: Outfit for display, DM Sans for body. Material wires the body
+ * font to .md-typeset and the heading font to .md-typeset h1/h2/h3. The
+ * letter-spacing tightens at display sizes per DESIGN.md.
+ */
+body,
+.md-typeset {
+  font-family: "DM Sans", system-ui, -apple-system, sans-serif;
+}
+
+.md-typeset h1,
+.md-typeset h2,
+.md-typeset h3,
+.md-typeset h4,
+.md-typeset h5,
+.md-typeset h6,
+.md-header,
+.md-tabs {
+  font-family: "Outfit", system-ui, -apple-system, sans-serif;
+}
+
+.md-typeset h1 { letter-spacing: -0.02em; font-weight: 600; }
+.md-typeset h2 { letter-spacing: -0.015em; font-weight: 600; }
+.md-typeset h3 { letter-spacing: -0.01em; font-weight: 600; }
+
+/* Tighten the header bar a touch and make it sit on the surface color. */
+.md-header {
+  font-weight: 500;
+}
+
+/* Code blocks: align with the dark midnight surface in slate mode. */
+[data-md-color-scheme="slate"] .md-typeset pre > code,
+[data-md-color-scheme="slate"] .md-typeset code {
+  background-color: #0f172a;
+}
+
+/* Admonition titles are subtle, not loud. */
+.md-typeset .admonition,
+.md-typeset details {
+  border-radius: 12px;
+  border-width: 1px;
+}
+
+/* Cards on the home page (grid cards extension). */
+.md-typeset .grid.cards > :is(ul, ol) > li,
+.md-typeset .grid > .card {
+  border-radius: 16px;
+}
+
+/* Pin the link color so it never inherits an accidental contrast issue. */
+.md-typeset a {
+  color: var(--md-typeset-a-color);
+}
+
+/* Footer keeps a separator like the marketing site does. */
+.md-footer-meta {
+  border-top: 1px solid var(--md-default-fg-color--lightest);
+}

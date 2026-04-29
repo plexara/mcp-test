@@ -43,3 +43,4 @@ go.work.sum
 
 # TypeScript incremental build cache
 *.tsbuildinfo
+/site/

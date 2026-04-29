@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+
+{#
+  Adds a small "Sponsored by Plexara" tagline above the footer copyright,
+  mirroring the marketing site's footer convention without overriding the
+  full structure.
+#}
+{% block footer %}
+{{ super() }}
+<div class="md-footer-meta md-typeset" style="background-color: var(--md-default-bg-color); padding: 0.5rem 0; text-align: center; font-size: 0.7rem;">
+  Open source by
+  <a href="https://plexara.io" rel="noopener" target="_blank">Plexara</a>,
+  the commercial MCP server with configurable enrichment built in.
+</div>
+{% endblock %}
