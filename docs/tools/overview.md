@@ -1,7 +1,7 @@
 # Tools overview
 
-12 tools across 4 categories. Each is a deliberately simple test
-fixture; the goal is observable, controllable behavior, not useful
+12 tools across 4 categories. Each is an intentionally simple test
+fixture. The goal is predictable, controllable behavior, not useful
 work.
 
 | Category | Tool | What it tests |

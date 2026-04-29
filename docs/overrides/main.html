@@ -1,15 +1,88 @@
 {% extends "base.html" %}
 
 {#
-  Adds a small "Sponsored by Plexara" tagline above the footer copyright,
-  mirroring the marketing site's footer convention without overriding the
-  full structure.
+  Site-wide overrides for mcp-test docs (Plexara identity).
+  - extrahead: preconnect, custom OG / theme color metadata.
+  - announce: dismissible banner used for release pointers.
+  - footer: full Plexara-style footer replaces Material's two-row default.
 #}
+
+{% block extrahead %}
+  {{ super() }}
+  <meta name="theme-color" content="#020617" />
+  <meta name="msapplication-TileColor" content="#020617" />
+  <link rel="preconnect" href="{{ '' | url }}" />
+  <meta property="og:type" content="website" />
+  {% if page %}
+  <meta property="og:title" content="{{ page.title | default(config.site_name) }} · {{ config.site_name }}" />
+  <meta property="og:description" content="{{ (page.meta and page.meta.description) | default(config.site_description) }}" />
+  <meta property="og:url" content="{{ page.canonical_url }}" />
+  {% else %}
+  <meta property="og:title" content="{{ config.site_name }}" />
+  <meta property="og:description" content="{{ config.site_description }}" />
+  {% endif %}
+  <meta property="og:image" content="{{ 'images/logo.svg' | url }}" />
+{% endblock %}
+
+{# No announce/banner block. Material renders nothing if {% block announce %}
+   is empty, but to be safe we explicitly clear it. #}
+{% block announce %}{% endblock %}
+
+{# Replace Material's stock footer with the Plexara multi-column footer. #}
 {% block footer %}
-{{ super() }}
-<div class="md-footer-meta md-typeset" style="background-color: var(--md-default-bg-color); padding: 0.5rem 0; text-align: center; font-size: 0.7rem;">
-  Open source by
-  <a href="https://plexara.io" rel="noopener" target="_blank">Plexara</a>,
-  the commercial MCP server with configurable enrichment built in.
-</div>
+<footer class="plex-footer" aria-label="Site footer">
+  <div class="plex-footer__inner">
+    <div class="plex-footer__grid">
+      <div>
+        <a class="plex-footer__brand" href="{{ '' | url }}">
+          <img src="{{ 'images/logo.svg' | url }}" alt="" />
+          <span>mcp-test</span>
+        </a>
+        <p class="plex-footer__lede">
+          A controllable Model Context Protocol server. Open source by
+          <a href="https://plexara.io" rel="noopener" target="_blank" style="color: var(--copper-300);">Plexara</a>,
+          the commercial MCP server with configurable enrichment built in.
+        </p>
+      </div>
+
+      <div class="plex-footer__col">
+        <h3 class="plex-footer__col-title">Project</h3>
+        <ul>
+          <li><a href="{{ 'getting-started/quickstart/' | url }}">Quickstart</a></li>
+          <li><a href="{{ 'configuration/reference/' | url }}">Configuration</a></li>
+          <li><a href="{{ 'tools/overview/' | url }}">Tools</a></li>
+          <li><a href="{{ 'operations/gateway-testing/' | url }}">Gateway testing</a></li>
+        </ul>
+      </div>
+
+      <div class="plex-footer__col">
+        <h3 class="plex-footer__col-title">Code</h3>
+        <ul>
+          <li><a href="https://github.com/plexara/mcp-test" rel="noopener" target="_blank">GitHub repository</a></li>
+          <li><a href="https://github.com/plexara/mcp-test/releases" rel="noopener" target="_blank">Releases</a></li>
+          <li><a href="https://github.com/plexara/mcp-test/pkgs/container/mcp-test" rel="noopener" target="_blank">Container image</a></li>
+          <li><a href="https://github.com/plexara/mcp-test/issues" rel="noopener" target="_blank">Issue tracker</a></li>
+        </ul>
+      </div>
+
+      <div class="plex-footer__col">
+        <h3 class="plex-footer__col-title">Plexara</h3>
+        <ul>
+          <li><a href="https://plexara.io" rel="noopener" target="_blank">plexara.io</a></li>
+          <li><a href="https://plexara.io/product" rel="noopener" target="_blank">Product</a></li>
+          <li><a href="https://plexara.io/contact" rel="noopener" target="_blank">Contact</a></li>
+          <li><a href="https://modelcontextprotocol.io/" rel="noopener" target="_blank">MCP spec</a></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="plex-footer__bottom">
+      <span>{{ config.copyright }}. Apache 2.0.</span>
+      <span>
+        Open source by
+        <a href="https://plexara.io" rel="noopener" target="_blank">Plexara</a>.
+      </span>
+    </div>
+  </div>
+</footer>
 {% endblock %}

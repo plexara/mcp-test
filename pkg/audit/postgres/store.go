@@ -142,7 +142,7 @@ func (s *Store) Breakdown(ctx context.Context, from, to time.Time, dimension str
 		return nil, nil
 	}
 	q := fmt.Sprintf(`
-		SELECT %s AS k,
+		SELECT COALESCE(%s::text, '') AS k,
 		       count(*) AS n,
 		       count(*) FILTER (WHERE NOT success) AS errors
 		FROM audit_events
@@ -271,12 +271,14 @@ func buildSelect(f audit.QueryFilter, count bool) (string, []any) {
 		limit = 100
 	}
 	args = append(args, limit, f.Offset)
-	return "SELECT id, ts, duration_ms, request_id, session_id, " +
-		"user_subject, user_email, auth_type, api_key_name, " +
-		"tool_name, tool_group, parameters, " +
-		"success, error_message, error_category, " +
+	return "SELECT id, ts, duration_ms, " +
+		"COALESCE(request_id, ''), COALESCE(session_id, ''), " +
+		"COALESCE(user_subject, ''), COALESCE(user_email, ''), " +
+		"COALESCE(auth_type, ''), COALESCE(api_key_name, ''), " +
+		"tool_name, COALESCE(tool_group, ''), parameters, " +
+		"success, COALESCE(error_message, ''), COALESCE(error_category, ''), " +
 		"request_chars, response_chars, content_blocks, " +
-		"transport, source, remote_addr, user_agent " +
+		"transport, source, COALESCE(remote_addr, ''), COALESCE(user_agent, '') " +
 		"FROM audit_events" + where +
 		" ORDER BY ts DESC" +
 		fmt.Sprintf(" LIMIT $%d OFFSET $%d", i, i+1), args

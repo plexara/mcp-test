@@ -20,9 +20,9 @@ This page collects the patterns.
 
 The client makes calls. The gateway transforms them (auth,
 enrichment, header rewriting, redaction, rate limiting). mcp-test
-records what arrived. You compare what the client sent against what
-mcp-test received and what the client got back; the diff is the
-gateway's behavior.
+records what arrived. Compare what the client sent against what
+mcp-test received against what the client got back. Where they
+differ is what the gateway did.
 
 ## Identity forwarding
 

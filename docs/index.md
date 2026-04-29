@@ -1,7 +1,10 @@
 ---
+title: mcp-test
+template: home.html
 hide:
   - navigation
   - toc
+  - footer
 ---
 
 # mcp-test
@@ -9,7 +12,8 @@ hide:
 A controllable Model Context Protocol server, built specifically as a
 fixture for testing MCP gateways end-to-end.
 
-The tools it exposes are deliberately simple, deterministic, and observable.
+The tools it exposes are intentionally boring; they return predictable
+output for predictable input.
 The point isn't what they *do*; the point is how they let you verify a
 gateway in front of them is doing the right things: forwarding identity,
 redacting secrets, applying enrichment, passing progress notifications,

@@ -1,0 +1,231 @@
+{#
+  Home page template. Replaces Material's article surface with a Plexara-
+  flavored composition: hero (woven-pattern + hero-glow + LogoMark),
+  feature grid (cards), reasons rail, and a CTA strip.
+
+  Triggered via `template: home.html` in the index.md front matter. We
+  still extend `main.html` so the global header, footer, search, and
+  announce bar are unchanged. The Markdown content of index.md is
+  available as `page.content` and rendered below the hero so existing
+  prose stays editable in source.
+#}
+{% extends "main.html" %}
+
+{# Tag the body so extra.css can collapse Material's content padding. #}
+{% block site_meta %}
+  {{ super() }}
+{% endblock %}
+
+{% block content %}
+<section class="plex-hero" aria-label="mcp-test introduction">
+  <div class="plex-woven" aria-hidden="true"></div>
+  <div class="plex-rule-top" aria-hidden="true"></div>
+
+  <div class="plex-hero__inner">
+    <div>
+      <p class="plex-eyebrow">Documentation</p>
+      <h1 class="plex-hero__title">
+        mcp-test
+      </h1>
+      <p class="plex-hero__lede">
+        A Model Context Protocol server built as a fixture for testing MCP
+        gateways. Twelve deterministic tools, three auth methods, a Postgres-
+        backed audit log of every call, and an embedded portal for live
+        inspection.
+      </p>
+      <div class="plex-hero__cta">
+        <a class="plex-btn plex-btn--primary" href="{{ 'getting-started/quickstart/' | url }}">
+          Quickstart
+          <svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <path d="M3.5 8h9m0 0L8.5 4m4 4l-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </a>
+        <a class="plex-btn plex-btn--ghost" href="https://github.com/plexara/mcp-test" rel="noopener" target="_blank">
+          <svg viewBox="0 0 16 16" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/>
+          </svg>
+          GitHub
+        </a>
+      </div>
+    </div>
+
+    <div class="plex-hero__art" aria-hidden="true">
+      <div class="plex-hero__art-glow">
+        <div class="plex-glow"></div>
+      </div>
+      <img class="plex-hero__mark" src="{{ 'images/logo.svg' | url }}" alt="" />
+    </div>
+  </div>
+
+  <div class="plex-rule-bottom" aria-hidden="true"></div>
+</section>
+
+<section class="plex-shots" aria-label="Portal screenshots">
+  <div class="plex-shots__inner">
+    <div class="plex-shots__head">
+      <div>
+        <span class="plex-section__eyebrow">Portal preview</span>
+        <h2>Inspect every call from the browser</h2>
+      </div>
+      <div class="plex-shots__nav" aria-hidden="true">
+        <button class="plex-shots__btn" data-shots-prev type="button" aria-label="Previous screenshot">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+        </button>
+        <button class="plex-shots__btn" data-shots-next type="button" aria-label="Next screenshot">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="plex-shots__viewport">
+    <div class="plex-shots__track" data-shots-track>
+      {% set shots = [
+        ["dashboard",   "Dashboard",     "Live counts, error rate, p50/p95 latency, and the most recent calls across every tool."],
+        ["audit",       "Audit log",     "Every call, filterable by tool, user, status, and source. Sanitized parameters and full response shape are one click away."],
+        ["tools",       "Tools",         "Twelve test fixtures grouped by category. Pick one to see its schema, run it, or browse the audit rows it produced."],
+        ["tools-tryit", "Try it",        "Per-tool form generated from the JSON schema. Sliders, dropdowns, and inline help; progress notifications stream in over SSE."],
+        ["keys",        "API keys",      "Create or revoke Postgres-backed bcrypt keys. Plaintext is shown once, then never again."],
+        ["wellknown",   "Discovery",     "RFC 9728 protected-resource metadata and the upstream OIDC authorization-server document, rendered the way an MCP client will see them."],
+        ["config",      "Config",        "Read-only YAML view of the running server, with secrets masked. Useful for sanity-checking what's actually loaded."]
+      ] %}
+      {% for slug, title, body in shots %}
+      <figure class="plex-shots__slide">
+        <div class="plex-shots__frame">
+          <img src="{{ ('images/portal/' ~ slug ~ '-light.png') | url }}" alt="Portal {{ title }} screen, light theme" data-theme="light" loading="lazy" decoding="async" />
+          <img src="{{ ('images/portal/' ~ slug ~ '-dark.png')  | url }}" alt="Portal {{ title }} screen, dark theme"  data-theme="dark"  loading="lazy" decoding="async" />
+        </div>
+        <figcaption class="plex-shots__caption">
+          <span class="eyebrow">Portal</span>
+          <h3>{{ title }}</h3>
+          <p>{{ body }}</p>
+        </figcaption>
+      </figure>
+      {% endfor %}
+    </div>
+    </div>
+  </div>
+</section>
+
+<section class="plex-section" aria-label="Highlights">
+  <div class="plex-section__inner">
+    <span class="plex-section__eyebrow">What's inside</span>
+    <h2 class="plex-section__title">Capabilities</h2>
+    <p class="plex-section__intro">
+      The tools are intentionally boring. They return predictable output for
+      predictable input, fail in well-defined ways when asked to, and log
+      every call. That's enough to write end-to-end assertions about a
+      gateway's behavior without depending on real upstream data.
+    </p>
+
+    <div class="plex-grid">
+      <article class="plex-card">
+        <span class="plex-card__icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v6"/><path d="m8 4 4 4 4-4"/><rect x="3" y="10" width="18" height="12" rx="2"/><path d="M7 14h10M7 18h6"/></svg>
+        </span>
+        <h3 class="plex-card__title">12 tools, 4 categories</h3>
+        <p class="plex-card__body">
+          Identity (whoami, echo, headers), data (deterministic fixtures),
+          failure modes (errors, slow, flaky), streaming (progress
+          notifications, multi-block content).
+        </p>
+      </article>
+
+      <article class="plex-card">
+        <span class="plex-card__icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-4"/></svg>
+        </span>
+        <h3 class="plex-card__title">Real auth, three ways</h3>
+        <p class="plex-card__body">
+          File-loaded API keys (constant-time compare), bcrypt-hashed
+          Postgres-backed keys, and external OIDC delegation with JWKS
+          caching. RFC 9728 protected-resource metadata so MCP clients can
+          discover the issuer.
+        </p>
+      </article>
+
+      <article class="plex-card">
+        <span class="plex-card__icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+        </span>
+        <h3 class="plex-card__title">Audit log of every call</h3>
+        <p class="plex-card__body">
+          Postgres-backed timeline with sanitized parameters, identity,
+          latency, response size, and source. Browse, filter, and chart it
+          in the embedded React portal.
+        </p>
+      </article>
+
+      <article class="plex-card">
+        <span class="plex-card__icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        </span>
+        <h3 class="plex-card__title">Streamable HTTP at the root</h3>
+        <p class="plex-card__body">
+          Mounted at <code>/</code>, with browsers redirected to
+          <code>/portal/</code> and MCP clients passing through. No path
+          conventions to fight.
+        </p>
+      </article>
+
+      <article class="plex-card">
+        <span class="plex-card__icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z"/></svg>
+        </span>
+        <h3 class="plex-card__title">Built-in instructions</h3>
+        <p class="plex-card__body">
+          The MCP <code>initialize</code> response includes server-level
+          instructions that clients surface to the LLM as system context,
+          telling models these tools are test fixtures, not data sources.
+        </p>
+      </article>
+
+      <article class="plex-card">
+        <span class="plex-card__icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+        </span>
+        <h3 class="plex-card__title">By Plexara</h3>
+        <p class="plex-card__body">
+          <a href="https://plexara.io" rel="noopener" target="_blank">Plexara</a>
+          is a commercial MCP server with configurable enrichment built in.
+          mcp-test is what we use to verify Plexara's gateway behavior
+          end-to-end; we ship it as OSS so anyone building MCP integrations
+          can use the same fixture.
+        </p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section class="plex-section" aria-label="Why a separate test server" style="padding-top: 0;">
+  <div class="plex-section__inner">
+    <span class="plex-section__eyebrow">Why this exists</span>
+    <h2 class="plex-section__title">Why a separate test server</h2>
+    <p class="plex-section__intro">
+      Pair mcp-test with the audit log and you can write end-to-end
+      assertions about gateway behavior without running fragile real-data
+      fixtures.
+    </p>
+
+    <ul class="plex-reasons">
+      <li>
+        Tools that return the same output for the same input
+        (<code>fixed_response</code>, <code>lorem</code> with a seed).
+      </li>
+      <li>
+        Tools that fail on demand and on a schedule
+        (<code>slow</code>, <code>flaky</code> seeded for reproducibility).
+      </li>
+      <li>
+        Tools that emit progress notifications you can count
+        (<code>progress</code>).
+      </li>
+      <li>
+        Tools that echo identity and headers so you can confirm what's
+        being forwarded (<code>whoami</code>, <code>headers</code>).
+      </li>
+    </ul>
+  </div>
+</section>
+{% endblock %}
+
+{% block content_actions %}{# hide the article actions on the home page #}{% endblock %}

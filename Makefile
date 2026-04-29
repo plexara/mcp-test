@@ -49,7 +49,7 @@ GOLINT   := golangci-lint
         dead-code mutate semgrep \
         verify tools-check \
         dev dev-anon dev-up dev-wait dev-ui-if-needed dev-down dev-logs \
-        docker docs docs-serve run version
+        docker docs docs-serve screenshots run version
 
 ## all: Build, test, lint
 all: build test lint
@@ -267,6 +267,19 @@ DOCS_HOST ?= 127.0.0.1
 DOCS_PORT ?= 8001
 docs-serve:
 	mkdocs serve -a $(DOCS_HOST):$(DOCS_PORT)
+
+## screenshots: Capture portal screenshots (light + dark) for the docs site.
+##              Seeds mock audit data via the configured database, then drives
+##              Playwright through every portal page. Requires the binary to
+##              be running on $(SHOTS_BASE_URL) (default http://localhost:8080).
+##              Re-run after any portal UI change.
+SHOTS_BASE_URL ?= http://localhost:8080
+SHOTS_API_KEY  ?= devkey-please-change
+screenshots:
+	@command -v node >/dev/null || { echo "node is required"; exit 1; }
+	@cd scripts/screenshots && \
+	    (test -d node_modules || npm install) && \
+	    MCPTEST_BASE_URL=$(SHOTS_BASE_URL) MCPTEST_DEV_KEY=$(SHOTS_API_KEY) node screenshots.mjs
 
 ## run: Build and run
 run: build
