@@ -30,6 +30,7 @@ func NewPortalAPI(cfg *config.Config, registry *tools.Registry, auditLog audit.L
 func (p *PortalAPI) Mount(mux *http.ServeMux, mw func(http.Handler) http.Handler) {
 	mux.Handle("GET /api/v1/portal/me", mw(http.HandlerFunc(p.me)))
 	mux.Handle("GET /api/v1/portal/server", mw(http.HandlerFunc(p.server)))
+	mux.Handle("GET /api/v1/portal/instructions", mw(http.HandlerFunc(p.instructions)))
 	mux.Handle("GET /api/v1/portal/tools", mw(http.HandlerFunc(p.tools)))
 	mux.Handle("GET /api/v1/portal/tools/{name}", mw(http.HandlerFunc(p.toolDetail)))
 	mux.Handle("GET /api/v1/portal/audit/events", mw(http.HandlerFunc(p.auditEvents)))
@@ -37,6 +38,16 @@ func (p *PortalAPI) Mount(mux *http.ServeMux, mw func(http.Handler) http.Handler
 	mux.Handle("GET /api/v1/portal/audit/breakdown", mw(http.HandlerFunc(p.auditBreakdown)))
 	mux.Handle("GET /api/v1/portal/dashboard", mw(http.HandlerFunc(p.dashboard)))
 	mux.Handle("GET /api/v1/portal/wellknown", mw(http.HandlerFunc(p.wellknown)))
+}
+
+// instructions returns the server-level instructions that this server hands
+// to MCP clients via ServerOptions.Instructions at initialize time. Most
+// clients surface that string to the LLM as system context, so showing it in
+// the portal helps operators audit what their model will see.
+func (p *PortalAPI) instructions(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{
+		"instructions": p.cfg.Server.Instructions,
+	})
 }
 
 func (p *PortalAPI) me(w http.ResponseWriter, r *http.Request) {

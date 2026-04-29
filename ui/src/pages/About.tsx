@@ -7,6 +7,7 @@ const MARK = `${import.meta.env.BASE_URL}plexara-mark.svg`;
 export default function About() {
   const server = useQuery({ queryKey: ["server"], queryFn: portalAPI.server });
   const tools = useQuery({ queryKey: ["tools"], queryFn: portalAPI.tools });
+  const instructions = useQuery({ queryKey: ["instructions"], queryFn: portalAPI.instructions });
 
   const groups = (tools.data?.tools ?? []).reduce<Record<string, number>>((acc, t) => {
     acc[t.group] = (acc[t.group] ?? 0) + 1;
@@ -73,6 +74,23 @@ export default function About() {
           mcp-test's audit log recorded; the diff is the gateway's behavior,
           made observable.
         </p>
+      </Section>
+
+      <Section title="Server instructions">
+        <p>
+          What this server tells connected MCP clients about itself at
+          initialize time. Most clients surface this to the LLM as system
+          context, so it shapes how a model approaches the tools below.
+        </p>
+        {instructions.data?.instructions ? (
+          <pre className="bg-card border border-border rounded p-3 mono text-xs whitespace-pre-wrap overflow-auto">
+{instructions.data.instructions}
+          </pre>
+        ) : (
+          <p className="text-muted-foreground text-sm">
+            (no instructions configured)
+          </p>
+        )}
       </Section>
 
       <Section title="Tool categories">

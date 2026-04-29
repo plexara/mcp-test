@@ -133,6 +133,7 @@ export type Key = {
 export const portalAPI = {
   me:        () => api.get<Identity>("/api/v1/portal/me"),
   server:    () => api.get<{ version: string; commit: string; date: string; config: unknown }>("/api/v1/portal/server"),
+  instructions: () => api.get<{ instructions: string }>("/api/v1/portal/instructions"),
   tools:     () => api.get<{ tools: ToolMeta[] }>("/api/v1/portal/tools"),
   toolDetail: (name: string) => api.get<ToolMeta>(`/api/v1/portal/tools/${encodeURIComponent(name)}`),
   audit:     (qs: string) => api.get<{ events: AuditEvent[]; total: number; limit: number; offset: number }>(`/api/v1/portal/audit/events${qs ? "?" + qs : ""}`),

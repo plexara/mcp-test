@@ -7,6 +7,12 @@ server:
   name: mcp-test
   address: ":${MCPTEST_PORT:-8080}"
   base_url: "${MCPTEST_BASE_URL:-http://localhost:8080}"
+  # Instructions are returned to MCP clients in the initialize response and
+  # most clients surface them to the LLM as system context. Leave empty to
+  # use the project default; set to "" explicitly to suppress.
+  # instructions: |
+  #   Custom server-level prose describing what this deployment is for and
+  #   how the LLM should treat it.
   read_header_timeout: 10s
   shutdown:
     grace_period: 25s

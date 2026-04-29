@@ -29,11 +29,48 @@ type ServerConfig struct {
 	Name              string         `yaml:"name"`
 	Address           string         `yaml:"address"`
 	BaseURL           string         `yaml:"base_url"`
+	Instructions      string         `yaml:"instructions"`
 	ReadHeaderTimeout time.Duration  `yaml:"read_header_timeout"`
 	Shutdown          ShutdownConfig `yaml:"shutdown"`
 	TLS               TLSConfig      `yaml:"tls"`
 	Streamable        StreamableHTTP `yaml:"streamable"`
 }
+
+// DefaultServerInstructions is what we hand to MCP clients via the SDK's
+// ServerOptions.Instructions when the operator hasn't overridden it. It
+// becomes the LLM's system-context-level description of the server, so the
+// goal here is "explain what this server is for and how to use it" without
+// being chatty.
+const DefaultServerInstructions = `This is mcp-test, a controllable Model Context Protocol server used to
+exercise MCP gateways (such as Plexara) end-to-end.
+
+The tools it exposes are deliberately simple and deterministic. Their job
+is not to compute anything useful; their job is to make a gateway's
+behavior observable. Every tool call is recorded in a Postgres-backed
+audit log, so a tester can compare what a client sent, what reached this
+server, and what came back.
+
+Tools are grouped by what they help you test:
+  - identity:  whoami, echo, headers - verify the gateway forwards
+               identity, args, and HTTP headers, redacting what's
+               configured to be redacted.
+  - data:      fixed_response, sized_response, lorem - deterministic
+               outputs for testing enrichment dedup, response-size
+               handling, and caching boundaries. Same input always
+               returns the same output.
+  - failure:   error, slow, flaky - controlled failure modes (errors,
+               latency, probabilistic flakiness) for testing retry and
+               timeout policy.
+  - streaming: progress, long_output, chatty - progress notifications
+               and multi-block content for testing streamable-HTTP
+               behavior end-to-end.
+
+Reproducibility: tools that take a "seed" (lorem, flaky) produce the
+same output for the same seed. fixed_response keys deterministically
+into a SHA-256-derived body. Use these to build assertions that survive
+across runs.
+
+This server is not a data source. Do not call it for real information.`
 
 // ShutdownConfig tunes graceful-drain behavior.
 type ShutdownConfig struct {
@@ -161,6 +198,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Server.BaseURL == "" {
 		c.Server.BaseURL = "http://localhost" + portFromAddr(c.Server.Address)
+	}
+	if c.Server.Instructions == "" {
+		c.Server.Instructions = DefaultServerInstructions
 	}
 	if c.Server.ReadHeaderTimeout == 0 {
 		c.Server.ReadHeaderTimeout = 10 * time.Second

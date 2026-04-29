@@ -142,7 +142,9 @@ func BuildWithDeps(cfg *config.Config, logger *slog.Logger, chain *auth.Chain, a
 func buildFromDeps(cfg *config.Config, logger *slog.Logger, chain *auth.Chain, auditLog audit.Logger) *Application {
 	mcpServer := mcp.NewServer(
 		&mcp.Implementation{Name: cfg.Server.Name, Version: build.Version},
-		nil,
+		&mcp.ServerOptions{
+			Instructions: cfg.Server.Instructions,
+		},
 	)
 	registry := buildRegistry(cfg)
 	for _, tk := range registry.Toolkits() {
