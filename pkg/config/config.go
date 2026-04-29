@@ -233,7 +233,14 @@ func (c *Config) applyDefaults() {
 		c.Audit.RetentionDays = 30
 	}
 	if len(c.Audit.RedactKeys) == 0 {
-		c.Audit.RedactKeys = []string{"password", "token", "secret", "authorization", "api_key", "credentials"}
+		// Matched as case-insensitive substrings against parameter keys
+		// and against header names by the `headers` tool. Operators should
+		// extend this for domain-specific secret naming.
+		c.Audit.RedactKeys = []string{
+			"password", "token", "secret", "authorization", "api_key",
+			"credentials", "bearer", "cookie", "jwt", "session_id",
+			"private_key", "passwd",
+		}
 	}
 	if c.Portal.CookieName == "" {
 		c.Portal.CookieName = "mcp_test_session"

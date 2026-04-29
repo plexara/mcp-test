@@ -9,19 +9,102 @@
 
 {% block extrahead %}
   {{ super() }}
-  <meta name="theme-color" content="#020617" />
+
+  {# Theme + favicon plumbing. The mark itself lives at images/logo.svg
+     and is referenced from mkdocs.yml; we set the OS / browser surfaces
+     so PWA-style installs and tab pinning use the Plexara midnight. #}
+  <meta name="theme-color" content="#020617" media="(prefers-color-scheme: dark)" />
+  <meta name="theme-color" content="#f8fafc" media="(prefers-color-scheme: light)" />
   <meta name="msapplication-TileColor" content="#020617" />
-  <link rel="preconnect" href="{{ '' | url }}" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin />
+  <link rel="preconnect" href="https://www.googletagmanager.com" crossorigin />
+
+  {# Canonical URL. Google strongly prefers a single canonical per page;
+     mkdocs-material exposes page.canonical_url which combines site_url
+     with the page path. #}
+  {% if page and page.canonical_url %}
+  <link rel="canonical" href="{{ page.canonical_url }}" />
+  {% endif %}
+
+  {# OpenGraph (Facebook/LinkedIn/Slack/Discord cards). #}
   <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="mcp-test" />
+  <meta property="og:locale" content="en_US" />
   {% if page %}
   <meta property="og:title" content="{{ page.title | default(config.site_name) }} · {{ config.site_name }}" />
   <meta property="og:description" content="{{ (page.meta and page.meta.description) | default(config.site_description) }}" />
-  <meta property="og:url" content="{{ page.canonical_url }}" />
+  {% if page.canonical_url %}<meta property="og:url" content="{{ page.canonical_url }}" />{% endif %}
   {% else %}
   <meta property="og:title" content="{{ config.site_name }}" />
   <meta property="og:description" content="{{ config.site_description }}" />
   {% endif %}
-  <meta property="og:image" content="{{ 'images/logo.svg' | url }}" />
+  {# OG image: prefer the auto-generated social card from mkdocs-material's
+     social plugin (when imaging deps are installed in CI) at
+     /assets/images/social/<page>.png; otherwise fall back to the project
+     logo. Twitter/X uses summary (square) when the image is square so the
+     fallback still renders cleanly. #}
+  {% if page and page.meta and page.meta.image %}
+  <meta property="og:image" content="{{ page.meta.image }}" />
+  <meta name="twitter:image" content="{{ page.meta.image }}" />
+  <meta name="twitter:card" content="summary_large_image" />
+  {% else %}
+  <meta property="og:image" content="{{ config.site_url }}images/logo.png" />
+  <meta property="og:image:type" content="image/png" />
+  <meta property="og:image:alt" content="mcp-test by Plexara" />
+  <meta name="twitter:image" content="{{ config.site_url }}images/logo.png" />
+  <meta name="twitter:card" content="summary" />
+  {% endif %}
+
+  {# Twitter / X cards. #}
+  <meta name="twitter:site" content="@plexara_io" />
+  <meta name="twitter:title" content="{% if page %}{{ page.title | default(config.site_name) }}{% else %}{{ config.site_name }}{% endif %}" />
+  <meta name="twitter:description" content="{% if page and page.meta and page.meta.description %}{{ page.meta.description }}{% else %}{{ config.site_description }}{% endif %}" />
+
+  {# Standard SEO. #}
+  <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
+  <meta name="author" content="Plexara" />
+  <meta name="generator" content="MkDocs Material" />
+
+  {# JSON-LD: SoftwareSourceCode + Organization. Helps Google's knowledge
+     graph attach the site to the project and the publisher. #}
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareSourceCode",
+    "name": "mcp-test",
+    "description": "{{ config.site_description }}",
+    "codeRepository": "{{ config.repo_url }}",
+    "programmingLanguage": ["Go", "TypeScript"],
+    "license": "https://www.apache.org/licenses/LICENSE-2.0",
+    "url": "{{ config.site_url }}",
+    "author": {
+      "@type": "Organization",
+      "name": "Plexara",
+      "url": "https://plexara.io",
+      "logo": "https://plexara.io/logo.svg"
+    },
+    "publisher": {
+      "@type": "Organization",
+      "name": "Plexara",
+      "url": "https://plexara.io"
+    }
+  }
+  </script>
+
+  {# Google Analytics 4. Same property as the Plexara marketing site so
+     mcp-test traffic rolls up under one account. consent default
+     "denied" matches the marketing site's CMP-friendly posture. #}
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-JTGSBLHDPS"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('consent', 'default', { analytics_storage: 'denied' });
+    gtag('js', new Date());
+    gtag('config', 'G-JTGSBLHDPS', {
+      anonymize_ip: true,
+      send_page_view: true
+    });
+  </script>
 {% endblock %}
 
 {# No announce/banner block. Material renders nothing if {% block announce %}

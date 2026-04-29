@@ -86,12 +86,17 @@ func (Toolkit) handleProgress(ctx context.Context, req *mcp.CallToolRequest, in 
 
 	for i := 0; i < steps; i++ {
 		if notified {
-			_ = req.Session.NotifyProgress(ctx, &mcp.ProgressNotificationParams{
+			// If the client is gone (transport closed mid-stream) NotifyProgress
+			// returns an error; bail out rather than burning the rest of the
+			// step budget on writes nobody will read.
+			if err := req.Session.NotifyProgress(ctx, &mcp.ProgressNotificationParams{
 				ProgressToken: token,
 				Progress:      float64(i + 1),
 				Total:         float64(steps),
 				Message:       fmt.Sprintf("step %d/%d", i+1, steps),
-			})
+			}); err != nil {
+				return nil, progressOutput{Steps: i, Notified: notified, Done: false}, err
+			}
 		}
 		select {
 		case <-ctx.Done():

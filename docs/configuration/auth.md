@@ -1,3 +1,8 @@
+---
+title: Authentication
+description: Three auth methods: file API keys with constant-time compare, Postgres-backed bcrypt keys, and external OIDC delegation with JWKS caching.
+---
+
 # Authentication
 
 mcp-test ships three auth methods that can be combined. Every request

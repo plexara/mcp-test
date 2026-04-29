@@ -1,3 +1,8 @@
+---
+title: Releases
+description: Version policy, container image tags, and migration notes between major versions.
+---
+
 # Releases
 
 mcp-test follows semantic versioning. Every push to `main` is

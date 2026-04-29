@@ -1,9 +1,10 @@
 # yaml-language-server: $schema=https://goreleaser.com/static/schema.json
 # vim: set ts=2 sw=2 tw=0 fo=cnqoj
 #
-# GoReleaser config for mcp-test. Mirrors the txn2/mcp-data-platform
-# pattern but drops the cosign / SBOM / homebrew / MCP-registry steps;
-# we publish binaries to GitHub Releases and container images to GHCR.
+# GoReleaser config for mcp-test. Publishes binaries to GitHub Releases
+# and multi-arch container images to GHCR. Cosign keyless signing and
+# SBOM generation are wired through via the release.yml workflow's
+# id-token: write permission.
 
 version: 2
 

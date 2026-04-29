@@ -21,6 +21,7 @@ func TestAdminAPI_KeysWithoutDB(t *testing.T) {
 	} {
 		req := httptest.NewRequest(tc.method, tc.path, strings.NewReader("{}"))
 		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Requested-With", "XMLHttpRequest")
 		w := httptest.NewRecorder()
 		mux.ServeHTTP(w, req)
 		if w.Code != http.StatusServiceUnavailable {
@@ -36,6 +37,7 @@ func TestAdminAPI_TryitWithoutMCPServer(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/tryit/whoami", strings.NewReader(`{}`))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Requested-With", "XMLHttpRequest")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 	if w.Code != http.StatusServiceUnavailable {

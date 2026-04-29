@@ -3,6 +3,7 @@ package httpsrv
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"time"
 
@@ -46,12 +47,15 @@ func NewAdminAPI(
 	}
 }
 
-// Mount adds the admin endpoints behind mw.
+// Mount adds the admin endpoints behind mw. State-changing endpoints get an
+// additional X-Requested-With check as CSRF protection (the SPA sets the
+// header on every request; a forged <form> submission cannot).
 func (a *AdminAPI) Mount(mux *http.ServeMux, mw func(http.Handler) http.Handler) {
-	mux.Handle("POST /api/v1/admin/keys", mw(http.HandlerFunc(a.createKey)))
+	wrap := func(h http.Handler) http.Handler { return mw(requireCSRFHeader(h)) }
+	mux.Handle("POST /api/v1/admin/keys", wrap(http.HandlerFunc(a.createKey)))
 	mux.Handle("GET  /api/v1/admin/keys", mw(http.HandlerFunc(a.listKeys)))
-	mux.Handle("DELETE /api/v1/admin/keys/{name}", mw(http.HandlerFunc(a.deleteKey)))
-	mux.Handle("POST /api/v1/admin/tryit/{name}", mw(http.HandlerFunc(a.tryit)))
+	mux.Handle("DELETE /api/v1/admin/keys/{name}", wrap(http.HandlerFunc(a.deleteKey)))
+	mux.Handle("POST /api/v1/admin/tryit/{name}", wrap(http.HandlerFunc(a.tryit)))
 }
 
 type createKeyReq struct {
@@ -130,13 +134,24 @@ func (a *AdminAPI) tryit(w http.ResponseWriter, r *http.Request) {
 	}
 	name := r.PathValue("name")
 	var req tryitReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err.Error() != "EOF" {
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
 
+	// Stamp the portal-authenticated identity onto the in-memory ctx so the
+	// audit middleware (which bypasses its own auth chain on the in-memory
+	// pipe) and any tool that reads auth.GetIdentity see the real caller
+	// instead of "anonymous." Without this, `whoami` invoked from Try-It
+	// would return anonymous regardless of who's logged in to the portal.
+	id := auth.GetIdentity(r.Context())
+	ctx := r.Context()
+	if id != nil {
+		ctx = auth.WithIdentity(ctx, id)
+	}
+
 	clientT, serverT := mcp.NewInMemoryTransports()
-	serverSession, err := a.mcpServer.Connect(r.Context(), serverT, nil)
+	serverSession, err := a.mcpServer.Connect(ctx, serverT, nil)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -144,16 +159,15 @@ func (a *AdminAPI) tryit(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = serverSession.Close() }()
 
 	client := mcp.NewClient(&mcp.Implementation{Name: "portal-tryit"}, nil)
-	clientSession, err := client.Connect(r.Context(), clientT, nil)
+	clientSession, err := client.Connect(ctx, clientT, nil)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 	defer func() { _ = clientSession.Close() }()
 
-	id := auth.GetIdentity(r.Context())
 	start := time.Now()
-	res, callErr := clientSession.CallTool(r.Context(), &mcp.CallToolParams{
+	res, callErr := clientSession.CallTool(ctx, &mcp.CallToolParams{
 		Name:      name,
 		Arguments: req.Arguments,
 	})

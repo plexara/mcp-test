@@ -1,3 +1,8 @@
+---
+title: Audit log
+description: The audit_events Postgres schema, retention policy, redaction rules, and the JSON shape returned by the portal API.
+---
+
 # Audit log
 
 Every `tools/call` produces a row in the `audit_events` Postgres

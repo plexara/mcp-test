@@ -1,3 +1,8 @@
+---
+title: Environment variables
+description: MCPTEST_* environment variables and how they map onto the YAML config keys via Loader interpolation.
+---
+
 # Environment variables
 
 mcp-test prefers YAML for configuration but every value can be

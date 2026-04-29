@@ -5,7 +5,6 @@ package identity
 
 import (
 	"context"
-	"sort"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -119,16 +118,10 @@ func (t *Toolkit) handleHeaders(_ context.Context, req *mcp.CallToolRequest, _ h
 		}
 		out[k] = append([]string{}, vs...)
 	}
-	keys := make([]string, 0, len(out))
-	for k := range out {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	sorted := make(map[string][]string, len(out))
-	for _, k := range keys {
-		sorted[k] = out[k]
-	}
-	return nil, headersOutput{Headers: sorted, Count: len(sorted)}, nil
+	// JSON encoders sort map keys lexically on serialization, so the
+	// returned object is already deterministic; no need to re-store into
+	// a fresh map.
+	return nil, headersOutput{Headers: out, Count: len(out)}, nil
 }
 
 func (t *Toolkit) shouldRedact(headerLower string) bool {

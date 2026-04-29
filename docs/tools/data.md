@@ -1,3 +1,8 @@
+---
+title: Data tools
+description: Three deterministic data tools: fixed_response returns a stable mapping, sized_response generates exactly N characters, lorem produces seeded fake-Latin text.
+---
+
 # Data tools
 
 Three tools that produce deterministic outputs. Useful for testing

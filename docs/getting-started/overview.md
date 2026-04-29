@@ -1,3 +1,8 @@
+---
+title: Overview
+description: What mcp-test is, who should use it, and why a separate test fixture beats poking real upstream MCP servers.
+---
+
 # Overview
 
 mcp-test is a Go binary that exposes an MCP server over HTTP, backed by

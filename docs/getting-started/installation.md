@@ -1,3 +1,8 @@
+---
+title: Installation
+description: Install mcp-test from a release archive, the GHCR container image, go install, or by building from source.
+---
+
 # Installation
 
 There are three ways to get mcp-test on your machine.

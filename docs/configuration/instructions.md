@@ -1,3 +1,8 @@
+---
+title: Server instructions
+description: The MCP initialize response carries server-level instructions clients surface to the LLM as system context, telling models these tools are test fixtures.
+---
+
 # Server instructions
 
 `server.instructions` is a free-form string returned to MCP clients in

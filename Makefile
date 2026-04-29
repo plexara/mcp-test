@@ -42,7 +42,7 @@ GOMOD    := $(GO) mod
 GOFMT    := gofmt
 GOLINT   := golangci-lint
 
-.PHONY: all build test test-short bench fmt fmt-check vet tidy clean help \
+.PHONY: all build test test-short bench fmt fmt-check vet tidy clean help dev-secrets \
         ui ui-dev ui-clean embed-clean \
         lint security gosec govulncheck \
         coverage coverage-gate coverage-report \
@@ -202,21 +202,35 @@ verify: tools-check fmt-check vet embed-clean test lint security coverage-gate c
 
 ## dev: One-command full local stack; postgres + keycloak in docker, binary in foreground.
 ##      Builds the SPA into the embed dir if dist/index.html is missing so the
-##      portal renders on first run.
-dev: dev-up dev-wait dev-ui-if-needed
-	@echo ""
-	@echo "Starting mcp-test (config: configs/mcp-test.live.yaml)..."
-	@echo "  Portal:    http://localhost:8080/portal/   (sign in with dev/dev or paste API key)"
-	@echo "  MCP:       http://localhost:8080/         (X-API-Key: \$$MCPTEST_DEV_KEY or devkey-please-change)"
-	@echo "  Keycloak:  http://localhost:8081/         (admin/admin)"
-	@echo "  API key:   $${MCPTEST_DEV_KEY:-devkey-please-change}"
-	@echo ""
+##      portal renders on first run. Generates .env.dev with random secrets on
+##      first run (gitignored); subsequent runs reuse those so sessions persist.
+dev: dev-up dev-wait dev-ui-if-needed dev-secrets
+	@. ./.env.dev && \
+	echo "" && \
+	echo "Starting mcp-test (config: configs/mcp-test.live.yaml)..." && \
+	echo "  Portal:    http://localhost:8080/portal/   (sign in with dev/dev or paste API key)" && \
+	echo "  MCP:       http://localhost:8080/         (X-API-Key: \$$MCPTEST_DEV_KEY)" && \
+	echo "  Keycloak:  http://localhost:8081/         (admin/admin)" && \
+	echo "  API key:   $$MCPTEST_DEV_KEY" && \
+	echo "" && \
 	$(GO) run $(LDFLAGS) $(CMD_DIR) --config configs/mcp-test.live.yaml
 
 ## dev-anon: Run anonymous-mode dev binary (no Keycloak, no auth); fastest iteration
-dev-anon:
+dev-anon: dev-secrets
 	docker compose -f docker-compose.dev.yml up -d postgres
-	$(GO) run $(CMD_DIR) --config configs/mcp-test.dev.yaml
+	@. ./.env.dev && $(GO) run $(CMD_DIR) --config configs/mcp-test.dev.yaml
+
+## dev-secrets: Generate .env.dev with random cookie secret + dev API key on first run.
+##              Re-run-safe; only writes if .env.dev is missing.
+dev-secrets:
+	@if [ ! -f .env.dev ]; then \
+		echo "Generating .env.dev with random secrets (gitignored)..."; \
+		printf 'export MCPTEST_COOKIE_SECRET=%s\nexport MCPTEST_DEV_KEY=%s\n' \
+			"$$(head -c 48 /dev/urandom | base64 | tr -d '\n')" \
+			"mcptest_$$(head -c 24 /dev/urandom | base64 | tr -d '\n=+/' | head -c 32)" \
+			> .env.dev; \
+		chmod 600 .env.dev; \
+	fi
 
 ## dev-up: Start the dev stack (postgres + keycloak) without the binary
 dev-up:
@@ -261,8 +275,8 @@ docs:
 	mkdocs build --strict
 
 ## docs-serve: Serve the documentation site locally. Default port is 8001
-##             (the txn2 docs already use 8000); override with DOCS_PORT.
-##             Bind address can be overridden with DOCS_HOST.
+##             so it doesn't collide with the binary on 8080. Override with
+##             DOCS_PORT. Bind address can be overridden with DOCS_HOST.
 DOCS_HOST ?= 127.0.0.1
 DOCS_PORT ?= 8001
 docs-serve:

@@ -33,13 +33,16 @@ func Audit(chain *auth.Chain, logger audit.Logger, redactKeys []string, toolGrou
 			}
 
 			// In-memory connections (the portal Try-It proxy) carry no HTTP
-			// headers, so we can't authenticate from them here. Stamp an
-			// anonymous identity so tool handlers that read it (whoami) keep
-			// working, then skip our own audit row; the portal handler
-			// writes its own row tagged source=portal-tryit with the real
-			// portal-authenticated identity.
+			// headers, so we can't authenticate from them here. The portal
+			// handler stamps the portal-authenticated identity onto ctx
+			// before calling CallTool; honor that if present, otherwise
+			// fall back to anonymous so tool handlers reading the identity
+			// keep working. Skip writing our own audit row in either case;
+			// the portal handler writes one tagged source=portal-tryit.
 			if extra := req.GetExtra(); extra == nil || extra.Header == nil {
-				ctx = auth.WithIdentity(ctx, auth.Anonymous())
+				if existing := auth.GetIdentity(ctx); existing == nil {
+					ctx = auth.WithIdentity(ctx, auth.Anonymous())
+				}
 				return next(ctx, method, req)
 			}
 
@@ -99,7 +102,9 @@ func enrichContext(ctx context.Context, req mcp.Request) context.Context {
 		return ctx
 	}
 	if extra.Header != nil {
-		ctx = auth.WithHeaders(ctx, extra.Header)
+		// Clone so downstream readers can't observe a future mutation by the
+		// SDK or middleware that holds a different reference to the map.
+		ctx = auth.WithHeaders(ctx, extra.Header.Clone())
 		if tok := tokenFromHeader(extra.Header); tok != "" {
 			ctx = auth.WithToken(ctx, tok)
 		}

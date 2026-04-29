@@ -1,3 +1,8 @@
+---
+title: Identity tools
+description: Three identity-passthrough tools: whoami returns the authenticated identity, echo round-trips arguments, headers reveals the HTTP headers that reached the server.
+---
+
 # Identity tools
 
 Three tools that surface authentication context, request arguments,

@@ -2,7 +2,10 @@
 //   - Targets /api/v1/portal/* and /api/v1/admin/* on the same origin.
 //   - Sends X-API-Key from sessionStorage when present (falls through to the
 //     session cookie otherwise).
-//   - Surfaces 401 as a typed Error so the auth store can react.
+//   - Always sends X-Requested-With on writes so the server's CSRF check
+//     accepts the request (and a forged <form> POST cannot reach it).
+//   - Surfaces 401 as a typed Error and triggers a registered handler so
+//     the auth store can clear local state and bounce to /login.
 
 const API_KEY_STORAGE = "mcp-test-api-key";
 
@@ -24,9 +27,18 @@ export function getApiKey(): string | null {
   return sessionStorage.getItem(API_KEY_STORAGE);
 }
 
+// onUnauthorized is called when any API request returns 401. The auth store
+// registers a handler at startup; until then we no-op (so library tests
+// don't blow up).
+let onUnauthorized: (() => void) | null = null;
+export function setUnauthorizedHandler(fn: () => void) {
+  onUnauthorized = fn;
+}
+
 async function request<T>(
   path: string,
   init: RequestInit = {},
+  signal?: AbortSignal,
 ): Promise<T> {
   const headers = new Headers(init.headers);
   const key = getApiKey();
@@ -34,33 +46,48 @@ async function request<T>(
   if (init.body && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
+  // The server requires this header on POST/PUT/PATCH/DELETE as a CSRF
+  // mitigation; cheap to send on every request.
+  if (!headers.has("X-Requested-With")) {
+    headers.set("X-Requested-With", "XMLHttpRequest");
+  }
   const resp = await fetch(path, {
     credentials: "include",
     ...init,
     headers,
+    signal,
   });
   if (resp.status === 204) return undefined as T;
-  const text = await resp.text();
+
+  // If the server returns HTML (e.g. a 502 from a misconfigured proxy),
+  // don't try to JSON.parse the entire page; surface a stable message.
+  const ct = resp.headers.get("content-type") || "";
   let body: unknown;
-  try {
-    body = text ? JSON.parse(text) : undefined;
-  } catch {
+  if (ct.includes("application/json")) {
+    body = await resp.json().catch(() => undefined);
+  } else {
+    const text = await resp.text();
     body = text;
   }
+
   if (!resp.ok) {
+    if (resp.status === 401) {
+      clearApiKey();
+      onUnauthorized?.();
+    }
     const msg =
       typeof body === "object" && body !== null && "error" in body
         ? String((body as { error: string }).error)
-        : resp.statusText;
+        : resp.statusText || `HTTP ${resp.status}`;
     throw new HttpError(resp.status, msg, body);
   }
   return body as T;
 }
 
 export const api = {
-  get:    <T>(path: string) => request<T>(path),
-  post:   <T>(path: string, body: unknown) => request<T>(path, { method: "POST", body: JSON.stringify(body) }),
-  delete: <T>(path: string) => request<T>(path, { method: "DELETE" }),
+  get:    <T>(path: string, signal?: AbortSignal) => request<T>(path, undefined, signal),
+  post:   <T>(path: string, body: unknown, signal?: AbortSignal) => request<T>(path, { method: "POST", body: JSON.stringify(body) }, signal),
+  delete: <T>(path: string, signal?: AbortSignal) => request<T>(path, { method: "DELETE" }, signal),
 };
 
 // --- typed endpoints ---

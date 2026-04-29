@@ -1,3 +1,8 @@
+---
+title: Failure-mode tools
+description: Three controllable-failure tools: error returns specified error categories, slow injects N milliseconds of latency, flaky fails P percent of calls reproducibly from a seed.
+---
+
 # Failure-mode tools
 
 Three tools that produce controlled failure modes (errors, latency,

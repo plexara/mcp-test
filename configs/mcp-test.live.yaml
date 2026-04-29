@@ -1,13 +1,19 @@
-# Full-stack live config; used by `make dev`.
-#
-# Runs against the bundled docker-compose stack (postgres + keycloak):
-#   docker compose -f docker-compose.dev.yml up -d postgres keycloak
+# Full-stack local config; used by `make dev` against the bundled
+# docker-compose stack (postgres + keycloak).
 #
 # Auth is real:
-#   - file API key from $MCPTEST_DEV_KEY (defaults to devkey-please-change)
+#   - file API key from $MCPTEST_DEV_KEY (required)
 #   - DB-backed bcrypt keys (managed via /api/v1/admin/keys)
 #   - OIDC bearer tokens from Keycloak realm "mcp-test"
 # Anonymous is OFF; portal requires login.
+#
+# `make dev` generates .env.dev on first run with random secrets and
+# loads it before launching the binary. Fail-closed: secrets have no
+# in-config defaults, so a hand-launched binary without those env
+# vars set will refuse to start (by design). Despite the name, this
+# config is for local development only; production deployments
+# should use mcp-test.example.yaml as a template and set
+# cookie_secure: true.
 
 server:
   name: mcp-test
@@ -26,7 +32,7 @@ oidc:
 api_keys:
   file:
     - name: dev-local
-      key: "${MCPTEST_DEV_KEY:-devkey-please-change}"
+      key: "${MCPTEST_DEV_KEY}"
       description: "local dev key"
   db:
     enabled: true
@@ -41,12 +47,12 @@ database:
 
 audit:
   enabled: true
-  redact_keys: [password, token, secret, authorization, cookie, api_key, credentials]
+  redact_keys: [password, token, secret, authorization, cookie, api_key, credentials, bearer, jwt, session_id, private_key]
 
 portal:
   enabled: true
   cookie_name: mcp_test_session
-  cookie_secret: "${MCPTEST_COOKIE_SECRET:-dev-cookie-secret-not-for-production-use-change-me}"
+  cookie_secret: "${MCPTEST_COOKIE_SECRET}"
   cookie_secure: false
 
 tools:

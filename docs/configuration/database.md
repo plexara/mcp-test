@@ -1,3 +1,8 @@
+---
+title: Database & migrations
+description: Postgres connection settings, pgxpool tuning, and the migrations that run on boot via golang-migrate.
+---
+
 # Database & migrations
 
 mcp-test uses PostgreSQL for two things: the audit-event log and the

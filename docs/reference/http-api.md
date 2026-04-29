@@ -1,3 +1,8 @@
+---
+title: HTTP API reference
+description: Portal read endpoints (/api/v1/portal/*) and admin write endpoints (/api/v1/admin/*). Request and response shapes.
+---
+
 # HTTP API reference
 
 Every HTTP route mcp-test exposes, beyond the MCP transport itself.

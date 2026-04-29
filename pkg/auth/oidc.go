@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/plexara/mcp-test/pkg/config"
 )
@@ -24,7 +25,10 @@ import (
 type OIDCConfig = config.OIDCConfig
 
 // OIDCAuthenticator verifies bearer JWTs issued by an external OIDC provider. It
-// caches JWKS public keys by kid, refreshing on a TTL.
+// caches JWKS public keys by kid, refreshing on a TTL. JWKS refreshes are
+// deduplicated via singleflight so a stampede of unknown-kid requests does
+// not hammer the IdP, and stale keys are served briefly past their TTL when
+// a refresh fails (stale-while-revalidate) to ride out transient outages.
 type OIDCAuthenticator struct {
 	cfg        OIDCConfig
 	httpClient *http.Client
@@ -33,7 +37,15 @@ type OIDCAuthenticator struct {
 	mu        sync.RWMutex
 	keys      map[string]*rsa.PublicKey
 	expiresAt time.Time
+	staleOK   time.Time // keys may be served until this time even after expiry
+
+	refresh singleflight.Group
 }
+
+// staleGracePeriod controls how long expired JWKS keys remain usable while
+// a refresh is failing. Long enough to ride out a brief IdP blip; short
+// enough that revoked keys don't keep working all day.
+const staleGracePeriod = 5 * time.Minute
 
 // NewOIDC returns an authenticator. It eagerly fetches the OpenID Discovery
 // document so that misconfiguration (wrong issuer, network error) fails at
@@ -65,6 +77,8 @@ func (v *OIDCAuthenticator) ValidateBearer(ctx context.Context, token string) (*
 	parser := jwt.NewParser(
 		jwt.WithLeeway(time.Duration(v.cfg.ClockSkewSeconds)*time.Second),
 		jwt.WithIssuer(v.cfg.Issuer),
+		jwt.WithExpirationRequired(),
+		jwt.WithValidMethods([]string{"RS256", "RS384", "RS512"}),
 	)
 
 	keyfunc := func(t *jwt.Token) (any, error) {
@@ -139,17 +153,32 @@ func (v *OIDCAuthenticator) ValidateBearer(ctx context.Context, token string) (*
 
 func (v *OIDCAuthenticator) publicKey(ctx context.Context, kid string) (*rsa.PublicKey, error) {
 	v.mu.RLock()
-	if time.Now().Before(v.expiresAt) {
+	now := time.Now()
+	if now.Before(v.expiresAt) {
 		if k, ok := v.keys[kid]; ok {
 			v.mu.RUnlock()
 			return k, nil
 		}
 	}
+	cached := v.keys[kid]
+	staleOK := v.staleOK
 	v.mu.RUnlock()
 
-	if err := v.refreshJWKS(ctx); err != nil {
+	// Singleflight refresh: many concurrent unknown-kid requests collapse to
+	// a single IdP fetch.
+	_, err, _ := v.refresh.Do("jwks", func() (any, error) {
+		return nil, v.refreshJWKS(ctx)
+	})
+
+	if err != nil {
+		// Refresh failed. Serve a stale key if we still have one and the
+		// grace window hasn't run out; otherwise propagate the error.
+		if cached != nil && time.Now().Before(staleOK) {
+			return cached, nil
+		}
 		return nil, err
 	}
+
 	v.mu.RLock()
 	defer v.mu.RUnlock()
 	k, ok := v.keys[kid]
@@ -226,6 +255,11 @@ func (v *OIDCAuthenticator) refreshJWKS(ctx context.Context) error {
 		if jwk.Use != "" && jwk.Use != "sig" {
 			continue
 		}
+		// Reject keys that advertise an alg outside our allowed set so a
+		// rogue HS256 entry on the JWKS document can't be used.
+		if jwk.Alg != "" && jwk.Alg != "RS256" && jwk.Alg != "RS384" && jwk.Alg != "RS512" {
+			continue
+		}
 		k, err := decodeRSA(jwk.N, jwk.E)
 		if err != nil {
 			continue
@@ -238,9 +272,11 @@ func (v *OIDCAuthenticator) refreshJWKS(ctx context.Context) error {
 		ttl = time.Hour
 	}
 
+	now := time.Now()
 	v.mu.Lock()
 	v.keys = keys
-	v.expiresAt = time.Now().Add(ttl)
+	v.expiresAt = now.Add(ttl)
+	v.staleOK = now.Add(ttl + staleGracePeriod)
 	v.mu.Unlock()
 	return nil
 }

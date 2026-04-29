@@ -1,3 +1,8 @@
+---
+title: Testing a gateway
+description: Patterns for asserting on a gateway's identity-forwarding, redaction, enrichment, and progress-passthrough using mcp-test as the predictable upstream.
+---
+
 # Testing a gateway
 
 mcp-test is a fixture, not a goal. The point is what you can verify

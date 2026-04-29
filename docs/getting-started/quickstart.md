@@ -1,3 +1,8 @@
+---
+title: Quickstart
+description: Bring up Postgres, Keycloak, and the binary in under five minutes with make dev. Point an MCP client at it and call every tool.
+---
+
 # Quickstart
 
 The repository ships with a one-command bring-up that gives you a

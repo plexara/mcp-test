@@ -15,7 +15,7 @@ oidc:
 api_keys:
   file:
     - name: dev-local
-      key: "${MCPTEST_DEV_KEY:-devkey-please-change}"
+      key: "${MCPTEST_DEV_KEY}"
       description: "local dev key"
   db:
     enabled: true
@@ -33,7 +33,7 @@ audit:
 
 portal:
   enabled: true
-  cookie_secret: "${MCPTEST_COOKIE_SECRET:-dev-cookie-secret-not-for-production-use-dev}"
+  cookie_secret: "${MCPTEST_COOKIE_SECRET}"
   cookie_secure: false
 
 tools:

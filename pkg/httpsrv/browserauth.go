@@ -2,6 +2,7 @@ package httpsrv
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -10,7 +11,10 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/plexara/mcp-test/pkg/auth"
 	"github.com/plexara/mcp-test/pkg/config"
@@ -37,11 +41,18 @@ type BrowserAuth struct {
 	authzURL string
 	tokenURL string
 	httpc    *http.Client
+
+	// Nonce ledger: every PKCE cookie carries a fresh nonce; on successful
+	// callback we record it as used and reject replays for 10 minutes. This
+	// is defense-in-depth on top of single-use IdP codes.
+	usedNoncesMu sync.Mutex
+	usedNonces   map[string]time.Time
 }
 
 // NewBrowserAuth wires the flow. The validator is the OIDC authenticator
-// (typically the same one used by the MCP server's auth chain). pkceSecret
-// must be at least 16 bytes; sessions is the long-lived cookie store.
+// (typically the same one used by the MCP server's auth chain). The PKCE
+// signing key is derived from the long-lived cookie secret with a domain
+// separator so a leak of one cookie does not directly forge the other.
 func NewBrowserAuth(
 	ctx context.Context,
 	cfg *config.Config,
@@ -55,7 +66,8 @@ func NewBrowserAuth(
 	if validator == nil {
 		return nil, fmt.Errorf("validator is required")
 	}
-	pkceStore, err := NewSessionStore("mcp_test_pkce", "pkce|"+cfg.Portal.CookieSecret, cfg.Portal.CookieSecure, 0)
+	pkceSecret := derivePKCESecret(cfg.Portal.CookieSecret)
+	pkceStore, err := NewSessionStore("mcp_test_pkce", pkceSecret, cfg.Portal.CookieSecure, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -68,12 +80,24 @@ func NewBrowserAuth(
 		sessions:     sessions,
 		pkceCookie:   pkceStore,
 		logger:       logger,
-		httpc:        &http.Client{},
+		httpc:        &http.Client{Timeout: 10 * time.Second},
+		usedNonces:   make(map[string]time.Time),
 	}
 	if err := b.discoverEndpoints(ctx); err != nil {
 		return nil, err
 	}
 	return b, nil
+}
+
+// derivePKCESecret produces a PKCE-flow signing key from the long-lived
+// cookie secret. We use HMAC-SHA256 with a fixed domain-separator label so
+// the two flows have independent keys derived from a single configured
+// secret. This protects against cross-flow forgery if the bytes of one
+// signed blob ever leaked while the secret stayed safe.
+func derivePKCESecret(cookieSecret string) string {
+	mac := hmac.New(sha256.New, []byte(cookieSecret))
+	_, _ = mac.Write([]byte("mcp-test/pkce/v1"))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
 // Mount adds the three handlers to the given mux.
@@ -84,17 +108,32 @@ func (b *BrowserAuth) Mount(mux *http.ServeMux) {
 }
 
 func (b *BrowserAuth) handleLogin(w http.ResponseWriter, r *http.Request) {
-	state, _ := randomString(32)
-	verifier, _ := randomString(64)
+	state, err := randomString(32)
+	if err != nil {
+		http.Error(w, "rng failure", http.StatusInternalServerError)
+		return
+	}
+	verifier, err := randomString(64)
+	if err != nil {
+		http.Error(w, "rng failure", http.StatusInternalServerError)
+		return
+	}
+	nonce, err := randomString(16)
+	if err != nil {
+		http.Error(w, "rng failure", http.StatusInternalServerError)
+		return
+	}
 	challenge := pkceChallenge(verifier)
 
-	// Stash state + verifier in a short-lived signed cookie so we can recover
-	// them in the callback without server-side storage.
+	// Stash state + verifier + nonce in a short-lived signed cookie so we can
+	// recover them in the callback without server-side storage. The nonce is
+	// what we record as "used" after a successful callback to prevent replay.
 	pl := SessionPayload{
 		Identity: &auth.Identity{Claims: map[string]any{
 			"state":    state,
 			"verifier": verifier,
-			"return":   r.URL.Query().Get("return"),
+			"nonce":    nonce,
+			"return":   sanitizeReturnPath(r.URL.Query().Get("return")),
 		}},
 	}
 	encoded, err := b.pkceCookie.encode(pl)
@@ -114,23 +153,22 @@ func (b *BrowserAuth) handleLogin(w http.ResponseWriter, r *http.Request) {
 	})
 
 	redirectURI := b.baseURL + b.redirectPath
-	u := b.authzURL
+	q := url.Values{}
+	q.Set("response_type", "code")
+	q.Set("client_id", b.cfg.ClientID)
+	q.Set("redirect_uri", redirectURI)
+	q.Set("scope", "openid email profile")
+	q.Set("state", state)
+	q.Set("code_challenge", challenge)
+	q.Set("code_challenge_method", "S256")
+	if b.cfg.Audience != "" {
+		q.Set("audience", b.cfg.Audience)
+	}
 	sep := "?"
-	if strings.Contains(u, "?") {
+	if strings.Contains(b.authzURL, "?") {
 		sep = "&"
 	}
-	u = u + sep +
-		"response_type=code" +
-		"&client_id=" + httpQueryEscape(b.cfg.ClientID) +
-		"&redirect_uri=" + httpQueryEscape(redirectURI) +
-		"&scope=" + httpQueryEscape("openid email profile") +
-		"&state=" + httpQueryEscape(state) +
-		"&code_challenge=" + httpQueryEscape(challenge) +
-		"&code_challenge_method=S256"
-	if b.cfg.Audience != "" {
-		u += "&audience=" + httpQueryEscape(b.cfg.Audience)
-	}
-	http.Redirect(w, r, u, http.StatusFound)
+	http.Redirect(w, r, b.authzURL+sep+q.Encode(), http.StatusFound)
 }
 
 func (b *BrowserAuth) handleCallback(w http.ResponseWriter, r *http.Request) {
@@ -146,10 +184,15 @@ func (b *BrowserAuth) handleCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	st, _ := pl.Identity.Claims["state"].(string)
 	verifier, _ := pl.Identity.Claims["verifier"].(string)
+	nonce, _ := pl.Identity.Claims["nonce"].(string)
 	returnTo, _ := pl.Identity.Claims["return"].(string)
 
 	if r.URL.Query().Get("state") != st || st == "" {
 		http.Error(w, "state mismatch", http.StatusBadRequest)
+		return
+	}
+	if !b.consumeNonce(nonce) {
+		http.Error(w, "replay rejected", http.StatusBadRequest)
 		return
 	}
 	code := r.URL.Query().Get("code")
@@ -160,13 +203,17 @@ func (b *BrowserAuth) handleCallback(w http.ResponseWriter, r *http.Request) {
 
 	idToken, err := b.exchangeCode(r.Context(), code, verifier)
 	if err != nil {
-		http.Error(w, "code exchange: "+err.Error(), http.StatusBadGateway)
+		// Surface a generic 502 to the client; the IdP body may contain
+		// tokens or sensitive details that should not be echoed downstream.
+		b.logger.Warn("oidc code exchange failed", "err", err)
+		http.Error(w, "code exchange failed", http.StatusBadGateway)
 		return
 	}
 
 	identity, err := b.validator.ValidateBearer(r.Context(), idToken)
 	if err != nil {
-		http.Error(w, "validate id_token: "+err.Error(), http.StatusUnauthorized)
+		b.logger.Warn("oidc id_token validation failed", "err", err)
+		http.Error(w, "id_token validation failed", http.StatusUnauthorized)
 		return
 	}
 
@@ -187,7 +234,7 @@ func (b *BrowserAuth) handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if returnTo == "" || !strings.HasPrefix(returnTo, "/") {
+	if returnTo == "" {
 		returnTo = "/portal/"
 	}
 	http.Redirect(w, r, returnTo, http.StatusFound)
@@ -198,21 +245,61 @@ func (b *BrowserAuth) handleLogout(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// sanitizeReturnPath enforces "must be a same-origin path." Browsers parse
+// `//evil.com` as a scheme-relative URL to a different origin, and `/\evil`
+// as a path containing a backslash that some IdPs/browsers normalize into
+// `//`. We reject both alongside the obvious "must start with /" rule.
+func sanitizeReturnPath(p string) string {
+	if p == "" {
+		return ""
+	}
+	if !strings.HasPrefix(p, "/") {
+		return ""
+	}
+	if strings.HasPrefix(p, "//") || strings.HasPrefix(p, `/\`) {
+		return ""
+	}
+	return p
+}
+
+// consumeNonce records a one-time-use nonce. Returns false if it was already
+// recorded within the TTL window. Stale entries are evicted opportunistically.
+func (b *BrowserAuth) consumeNonce(nonce string) bool {
+	if nonce == "" {
+		return false
+	}
+	const ttl = 10 * time.Minute
+	now := time.Now()
+	b.usedNoncesMu.Lock()
+	defer b.usedNoncesMu.Unlock()
+	// Opportunistic eviction; ledger is small.
+	for k, t := range b.usedNonces {
+		if now.Sub(t) > ttl {
+			delete(b.usedNonces, k)
+		}
+	}
+	if _, used := b.usedNonces[nonce]; used {
+		return false
+	}
+	b.usedNonces[nonce] = now
+	return true
+}
+
 // discoverEndpoints fetches the OIDC discovery document for authz/token URLs.
 //
 // We deliberately do this in BrowserAuth rather than reaching into the
 // validator: the validator only needs JWKS, but PKCE login also needs the
 // authorization_endpoint and token_endpoint.
 func (b *BrowserAuth) discoverEndpoints(ctx context.Context) error {
-	url := strings.TrimRight(b.cfg.Issuer, "/") + "/.well-known/openid-configuration"
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	discoveryURL := strings.TrimRight(b.cfg.Issuer, "/") + "/.well-known/openid-configuration"
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, discoveryURL, nil)
 	resp, err := b.httpc.Do(req)
 	if err != nil {
 		return fmt.Errorf("discover: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("discover %s: status %d", url, resp.StatusCode)
+		return fmt.Errorf("discover %s: status %d", discoveryURL, resp.StatusCode)
 	}
 	var doc struct {
 		AuthzEndpoint string `json:"authorization_endpoint"`
@@ -230,14 +317,13 @@ func (b *BrowserAuth) discoverEndpoints(ctx context.Context) error {
 }
 
 func (b *BrowserAuth) exchangeCode(ctx context.Context, code, verifier string) (string, error) {
-	form := strings.NewReader(strings.Join([]string{
-		"grant_type=authorization_code",
-		"code=" + httpQueryEscape(code),
-		"redirect_uri=" + httpQueryEscape(b.baseURL+b.redirectPath),
-		"client_id=" + httpQueryEscape(b.cfg.ClientID),
-		"code_verifier=" + httpQueryEscape(verifier),
-	}, "&"))
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, b.tokenURL, form)
+	form := url.Values{}
+	form.Set("grant_type", "authorization_code")
+	form.Set("code", code)
+	form.Set("redirect_uri", b.baseURL+b.redirectPath)
+	form.Set("client_id", b.cfg.ClientID)
+	form.Set("code_verifier", verifier)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, b.tokenURL, strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	if b.cfg.ClientSecret != "" {
 		req.SetBasicAuth(b.cfg.ClientID, b.cfg.ClientSecret)
@@ -247,9 +333,12 @@ func (b *BrowserAuth) exchangeCode(ctx context.Context, code, verifier string) (
 		return "", err
 	}
 	defer func() { _ = resp.Body.Close() }()
-	body, _ := io.ReadAll(resp.Body)
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("token endpoint returned %d: %s", resp.StatusCode, string(body))
+		// Truncate IdP body to a hash + length, never embed the raw body in
+		// the returned error: it can carry refresh tokens or other secrets
+		// depending on IdP misbehavior.
+		return "", fmt.Errorf("token endpoint returned %d (body %d bytes)", resp.StatusCode, len(body))
 	}
 	var tok struct {
 		IDToken string `json:"id_token"`
@@ -274,22 +363,4 @@ func randomString(n int) (string, error) {
 func pkceChallenge(verifier string) string {
 	sum := sha256.Sum256([]byte(verifier))
 	return base64.RawURLEncoding.EncodeToString(sum[:])
-}
-
-// httpQueryEscape avoids importing net/url just for one helper.
-func httpQueryEscape(s string) string {
-	// Match url.QueryEscape semantics for the characters we expect to encounter.
-	var b strings.Builder
-	for _, c := range s {
-		switch {
-		case c >= 'A' && c <= 'Z', c >= 'a' && c <= 'z', c >= '0' && c <= '9',
-			c == '-', c == '_', c == '.', c == '~':
-			b.WriteRune(c)
-		case c == ' ':
-			b.WriteByte('+')
-		default:
-			fmt.Fprintf(&b, "%%%02X", c)
-		}
-	}
-	return b.String()
 }

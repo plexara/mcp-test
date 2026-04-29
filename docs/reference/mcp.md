@@ -1,3 +1,8 @@
+---
+title: MCP protocol
+description: Streamable HTTP transport, session lifecycle, headers, and progress notifications as mcp-test implements them.
+---
+
 # MCP protocol
 
 mcp-test implements the MCP 2025-06-18 spec via the official

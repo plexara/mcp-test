@@ -67,7 +67,7 @@ function ToolDetail({ tool }: { tool: ToolMeta }) {
 {JSON.stringify(tool, null, 2)}
         </pre>
       )}
-      {tab === "tryit" && <ToolForm toolName={tool.name} />}
+      {tab === "tryit" && <ToolForm toolName={tool.name} inputSchema={tool.input_schema} />}
     </div>
   );
 }

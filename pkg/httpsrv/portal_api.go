@@ -2,6 +2,7 @@ package httpsrv
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -56,12 +57,22 @@ func (p *PortalAPI) me(w http.ResponseWriter, r *http.Request) {
 }
 
 // sanitizedConfig returns a config with secrets replaced by "[redacted]".
+//
+// Important: deep-copies the APIKeys.File slice before mutating. A naive
+// `c := *cfg` only copies the slice header, so mutating entries through
+// the local copy would corrupt the live in-memory config that other
+// callers (apikey store, auth chain) hold references to.
 func sanitizedConfig(cfg *config.Config) map[string]any {
 	c := *cfg
 	c.Portal.CookieSecret = redactIfSet(c.Portal.CookieSecret)
 	c.OIDC.ClientSecret = redactIfSet(c.OIDC.ClientSecret)
-	for i := range c.APIKeys.File {
-		c.APIKeys.File[i].Key = redactIfSet(c.APIKeys.File[i].Key)
+	if len(c.APIKeys.File) > 0 {
+		clone := make([]config.FileAPIKey, len(c.APIKeys.File))
+		copy(clone, c.APIKeys.File)
+		for i := range clone {
+			clone[i].Key = redactIfSet(clone[i].Key)
+		}
+		c.APIKeys.File = clone
 	}
 	if i := strings.LastIndex(c.Database.URL, "@"); i > 0 {
 		c.Database.URL = "[redacted]" + c.Database.URL[i:]
@@ -154,6 +165,10 @@ func (p *PortalAPI) auditEvents(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// maxTimeseriesWindow caps the requested time-series window at 30 days
+// regardless of bucket size, to bound query cost on the audit table.
+const maxTimeseriesWindow = 30 * 24 * time.Hour
+
 func (p *PortalAPI) auditTimeseries(w http.ResponseWriter, r *http.Request) {
 	f := parseQueryFilter(r)
 	bucket := time.Minute
@@ -162,9 +177,16 @@ func (p *PortalAPI) auditTimeseries(w http.ResponseWriter, r *http.Request) {
 			bucket = d
 		}
 	}
+	if bucket < time.Second {
+		bucket = time.Second
+	}
+	if !f.From.IsZero() && !f.To.IsZero() && f.To.Sub(f.From) > maxTimeseriesWindow {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("time window exceeds %s", maxTimeseriesWindow))
+		return
+	}
 	pts, err := p.audit.TimeSeries(r.Context(), f.From, f.To, bucket)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
+		writeError(w, http.StatusBadRequest, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"points": pts, "bucket": bucket.String()})

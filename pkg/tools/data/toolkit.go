@@ -84,11 +84,21 @@ type sizedOutput struct {
 	Body string `json:"body"`
 }
 
-const sizedAlphabet = "abcdefghijklmnopqrstuvwxyz"
+const (
+	sizedAlphabet = "abcdefghijklmnopqrstuvwxyz"
+	// sizedMax bounds the result size at 1 MiB. The tool exists to test
+	// gateway size-limit handling, not to allocate gigabytes; a caller that
+	// passes 2_000_000_000 would otherwise force the server to grow a 2 GB
+	// buffer per request.
+	sizedMax = 1 << 20
+)
 
 func (Toolkit) handleSized(_ context.Context, _ *mcp.CallToolRequest, in sizedInput) (*mcp.CallToolResult, sizedOutput, error) {
 	if in.Size < 0 {
 		return nil, sizedOutput{}, fmt.Errorf("size must be >= 0, got %d", in.Size)
+	}
+	if in.Size > sizedMax {
+		return nil, sizedOutput{}, fmt.Errorf("size %d exceeds max %d", in.Size, sizedMax)
 	}
 	if in.Size == 0 {
 		return nil, sizedOutput{Size: 0, Body: ""}, nil

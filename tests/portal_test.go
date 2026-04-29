@@ -199,6 +199,7 @@ func TestAdminAPI_TryIt(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/admin/tryit/fixed_response", body)
 	req.Header.Set("X-API-Key", portalAPIKey)
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Requested-With", "XMLHttpRequest")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)

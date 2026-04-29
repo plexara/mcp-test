@@ -18,8 +18,10 @@ services:
       POSTGRES_USER: mcp
       POSTGRES_PASSWORD: mcp
       POSTGRES_DB: mcp_test
+    # Bind to loopback only so the dev DB isn't reachable from the local
+    # network. Override with COMPOSE_BIND=0.0.0.0 if you actually need it.
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - mcp-test-pg-data:/var/lib/postgresql/data
     healthcheck:
@@ -38,17 +40,24 @@ services:
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin
     ports:
-      - "8081:8080"
+      - "127.0.0.1:8081:8080"
     volumes:
       - ./dev/keycloak:/opt/keycloak/data/import:ro
     depends_on:
       postgres:
         condition: service_healthy
 
+  # Runtime image of mcp-test for compose users who want everything in
+  # docker. Most of the time `make dev` is faster: it runs the binary
+  # outside compose against the postgres + keycloak services above.
+  #
+  # The base image expects the binary at /usr/local/bin/mcp-test; we build
+  # it with `make build` (or `make docker`) and copy it in at image-build
+  # time via the Dockerfile at the repo root.
   mcp-test:
     build:
       context: .
-      dockerfile: build/Dockerfile
+      dockerfile: Dockerfile.dev
     image: mcp-test:dev
     container_name: mcp-test-server
     environment:
@@ -57,11 +66,14 @@ services:
       MCPTEST_OIDC_ISSUER: http://keycloak:8080/realms/mcp-test
       MCPTEST_OIDC_AUDIENCE: mcp-test
       MCPTEST_OIDC_CLIENT_ID: mcp-test-portal
-      MCPTEST_COOKIE_SECRET: dev-cookie-secret-not-for-production-use-dev
-      MCPTEST_DEV_KEY: devkey-please-change
+      # Both required (no in-config defaults). For dev convenience compose
+      # passes literal placeholders here; in any non-dev use, set them
+      # via shell env or a .env file.
+      MCPTEST_COOKIE_SECRET: ${MCPTEST_COOKIE_SECRET:?required}
+      MCPTEST_DEV_KEY: ${MCPTEST_DEV_KEY:?required}
     command: ["--config", "/app/configs/mcp-test.dev.yaml"]
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     depends_on:
       postgres:
         condition: service_healthy

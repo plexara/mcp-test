@@ -1,6 +1,17 @@
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { portalAPI } from "@/lib/api";
+
+// useDebounced returns `value` after `ms` of stillness; used to avoid
+// firing an audit query on every keystroke.
+function useDebounced<T>(value: T, ms = 300): T {
+  const [v, setV] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setV(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return v;
+}
 
 export default function Audit() {
   const [tool, setTool] = useState("");
@@ -10,11 +21,15 @@ export default function Audit() {
   const [page, setPage] = useState(0);
   const limit = 50;
 
+  const debouncedSearch = useDebounced(search, 300);
+  const debouncedTool = useDebounced(tool, 300);
+  const debouncedUser = useDebounced(user, 300);
+
   const qs = new URLSearchParams();
-  if (tool)    qs.set("tool", tool);
-  if (user)    qs.set("user", user);
-  if (success) qs.set("success", success);
-  if (search)  qs.set("q", search);
+  if (debouncedTool)   qs.set("tool", debouncedTool);
+  if (debouncedUser)   qs.set("user", debouncedUser);
+  if (success)         qs.set("success", success);
+  if (debouncedSearch) qs.set("q", debouncedSearch);
   qs.set("limit", String(limit));
   qs.set("offset", String(page * limit));
 

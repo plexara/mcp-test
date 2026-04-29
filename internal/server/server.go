@@ -33,19 +33,20 @@ import (
 
 // Application is the wired-up server, ready to be started with Run.
 type Application struct {
-	cfg       *config.Config
-	logger    *slog.Logger
-	pool      *pgxpool.Pool
-	mcpServer *mcp.Server
-	registry  *tools.Registry
-	auditLog  audit.Logger
-	chain     *auth.Chain
-	dbKeys    *apikeys.Store
-	oidc      *auth.OIDCAuthenticator
-	sessions  *httpsrv.SessionStore
-	browser   *httpsrv.BrowserAuth
-	readiness *httpsrv.Readiness
-	mux       http.Handler
+	cfg        *config.Config
+	logger     *slog.Logger
+	pool       *pgxpool.Pool
+	mcpServer  *mcp.Server
+	registry   *tools.Registry
+	auditLog   audit.Logger
+	asyncAudit *audit.AsyncLogger // non-nil when audit is enabled; closed during shutdown
+	chain      *auth.Chain
+	dbKeys     *apikeys.Store
+	oidc       *auth.OIDCAuthenticator
+	sessions   *httpsrv.SessionStore
+	browser    *httpsrv.BrowserAuth
+	readiness  *httpsrv.Readiness
+	mux        http.Handler
 }
 
 // DBKeys returns the DB-backed key store, or nil if api_keys.db.enabled is false.
@@ -62,7 +63,18 @@ func Build(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*Appli
 		return nil, fmt.Errorf("database: %w", err)
 	}
 
-	auditLog := auditpg.New(pool)
+	// Wrap the underlying Postgres logger with an async buffered drain so a
+	// stalled DB can never inflate request latency. When audit.enabled is
+	// false we plug in a NoopLogger and skip the drain goroutine entirely.
+	var auditLog audit.Logger
+	var asyncAudit *audit.AsyncLogger
+	if cfg.Audit.Enabled {
+		asyncAudit = audit.NewAsyncLogger(auditpg.New(pool), 4096, 5*time.Second, logger)
+		auditLog = asyncAudit
+	} else {
+		auditLog = audit.NoopLogger{}
+		logger.Info("audit disabled by config")
+	}
 
 	fileStore := auth.NewFileAPIKeyStore(cfg.APIKeys.File)
 	var keyStore auth.APIKeyStore = fileStore
@@ -91,6 +103,7 @@ func Build(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*Appli
 	app.pool = pool
 	app.dbKeys = dbStore
 	app.oidc = oidcConcrete
+	app.asyncAudit = asyncAudit
 
 	if cfg.Portal.Enabled {
 		sessions, err := httpsrv.NewSessionStore(cfg.Portal.CookieName, cfg.Portal.CookieSecret, cfg.Portal.CookieSecure, 12*time.Hour)
@@ -186,8 +199,12 @@ func buildRegistry(cfg *config.Config) *tools.Registry {
 	return r
 }
 
-// Close releases held resources (database pool).
+// Close releases held resources: drains the async audit queue, then closes
+// the database pool.
 func (a *Application) Close() {
+	if a.asyncAudit != nil {
+		a.asyncAudit.Close()
+	}
 	if a.pool != nil {
 		a.pool.Close()
 	}
@@ -230,12 +247,28 @@ func (a *Application) Run(ctx context.Context) error {
 
 	a.logger.Info("shutdown requested, draining")
 	a.readiness.SetReady(false)
-	time.Sleep(a.cfg.Server.Shutdown.PreShutdownDelay)
+
+	// Interruptible pre-shutdown delay: a second SIGINT (re-cancels ctx) or
+	// an unexpected listener error short-circuits the wait so an impatient
+	// operator can force shutdown.
+	if d := a.cfg.Server.Shutdown.PreShutdownDelay; d > 0 {
+		select {
+		case <-time.After(d):
+		case err := <-errCh:
+			a.logger.Warn("listener exited during pre-shutdown delay", "err", err)
+		case <-ctx.Done():
+		}
+	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), a.cfg.Server.Shutdown.GracePeriod)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("shutdown: %w", err)
+	}
+	// Drain any post-Shutdown listener error so the goroutine is fully
+	// reaped before we return.
+	if err, ok := <-errCh; ok && err != nil {
+		a.logger.Warn("listener post-shutdown error", "err", err)
 	}
 	a.logger.Info("shutdown complete")
 	return nil

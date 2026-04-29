@@ -1,3 +1,8 @@
+---
+title: YAML reference
+description: Every YAML key in mcp-test config: server, oidc, api_keys, auth, database, audit, portal, tools. Defaults and environment overrides.
+---
+
 # YAML reference
 
 Every config key with its type, default, and environment-variable

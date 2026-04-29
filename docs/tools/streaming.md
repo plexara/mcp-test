@@ -1,3 +1,8 @@
+---
+title: Streaming tools
+description: Three streaming tools: progress emits N progress notifications, long_output streams M chunks of K characters, chatty returns multi-block content in one result.
+---
+
 # Streaming tools
 
 Three tools that exercise progress notifications, multi-block content,

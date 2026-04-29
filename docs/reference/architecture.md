@@ -1,3 +1,8 @@
+---
+title: Architecture
+description: Component diagram, request flow, audit pipeline, and the embed model that bakes the React portal into the Go binary.
+---
+
 # Architecture
 
 A short tour of how the binary is wired together. Useful if you're

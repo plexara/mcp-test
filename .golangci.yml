@@ -52,10 +52,10 @@ linters:
         - G304   # config paths come from operator-supplied flags
 
   exclusions:
-    paths:
-      - ".*_test\\.go$"
     rules:
-      # Test files exercise edge cases; allow noise that would be wrong in production.
+      # Test files exercise edge cases; allow targeted noise that would be
+      # wrong in production but is fine in tests. (Other linters still run
+      # against tests so we catch real bugs there.)
       - path: _test\.go
         linters:
           - gosec

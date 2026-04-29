@@ -1,18 +1,20 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { adminAPI } from "@/lib/api";
 
 export default function ApiKeys() {
   const qc = useQueryClient();
-  const list = useQuery({ queryKey: ["keys"], queryFn: adminAPI.listKeys });
+  const list = useQuery({ queryKey: ["keys"], queryFn: () => adminAPI.listKeys() });
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [created, setCreated] = useState<{ name: string; plaintext: string } | null>(null);
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
 
   const create = useMutation({
     mutationFn: () => adminAPI.createKey(name, description),
     onSuccess: (res) => {
       setCreated({ name: res.key.name, plaintext: res.plaintext });
+      setCopyState("idle");
       setName(""); setDescription("");
       qc.invalidateQueries({ queryKey: ["keys"] });
     },
@@ -21,6 +23,29 @@ export default function ApiKeys() {
     mutationFn: (n: string) => adminAPI.deleteKey(n),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["keys"] }),
   });
+
+  // Block accidental tab-close while a freshly minted key is on screen; the
+  // user won't see the plaintext again. Only active when `created` is set.
+  useEffect(() => {
+    if (!created) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [created]);
+
+  async function copyKey() {
+    if (!created) return;
+    try {
+      await navigator.clipboard.writeText(created.plaintext);
+      setCopyState("copied");
+      setTimeout(() => setCopyState("idle"), 1500);
+    } catch {
+      setCopyState("failed");
+    }
+  }
 
   return (
     <div className="space-y-6 max-w-3xl">
@@ -43,7 +68,14 @@ export default function ApiKeys() {
           <div className="font-medium">Key created; copy it now, it won't be shown again.</div>
           <div>name: <span className="mono">{created.name}</span></div>
           <div>value: <code className="bg-card px-2 py-1 rounded border border-border mono">{created.plaintext}</code></div>
-          <button onClick={() => navigator.clipboard.writeText(created.plaintext)} className="text-success underline text-xs">Copy to clipboard</button>
+          <div className="flex items-center gap-3">
+            <button type="button" onClick={copyKey} className="text-success underline text-xs">
+              {copyState === "copied" ? "Copied!" : copyState === "failed" ? "Copy failed; select manually" : "Copy to clipboard"}
+            </button>
+            <button type="button" onClick={() => setCreated(null)} className="text-muted-foreground hover:text-foreground text-xs">
+              Dismiss
+            </button>
+          </div>
         </div>
       )}
 

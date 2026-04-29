@@ -8,9 +8,11 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/plexara/mcp-test/internal/server"
 	"github.com/plexara/mcp-test/pkg/config"
@@ -27,11 +29,17 @@ func run() error {
 	configPath := flag.String("config", "configs/mcp-test.yaml", "path to YAML config file")
 	address := flag.String("address", "", "override server.address (e.g. :9090)")
 	showVersion := flag.Bool("version", false, "print build version and exit")
+	healthcheck := flag.Bool("healthcheck", false, "probe http://127.0.0.1:8080/healthz and exit")
 	flag.Parse()
 
 	if *showVersion {
 		fmt.Println(server.Version())
 		return nil
+	}
+	if *healthcheck {
+		// Distroless images can't bundle curl/wget, so the binary doubles as
+		// its own healthcheck probe. Exits 0 on a 200, non-zero otherwise.
+		return runHealthcheck()
 	}
 
 	logger := newLogger()
@@ -55,6 +63,23 @@ func run() error {
 	defer app.Close()
 
 	return app.Run(ctx)
+}
+
+func runHealthcheck() error {
+	url := os.Getenv("MCPTEST_HEALTHCHECK_URL")
+	if url == "" {
+		url = "http://127.0.0.1:8080/healthz"
+	}
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return fmt.Errorf("healthcheck: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("healthcheck: status %d", resp.StatusCode)
+	}
+	return nil
 }
 
 func newLogger() *slog.Logger {

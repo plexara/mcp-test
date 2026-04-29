@@ -1,3 +1,8 @@
+---
+title: Portal
+description: The embedded React 19 portal: Login, Dashboard, Tools (with Try-It), Audit, API Keys, Config, Discovery, About. Light and dark themes.
+---
+
 # Portal
 
 The portal is a React 19 SPA mounted at `/portal/`, served from the

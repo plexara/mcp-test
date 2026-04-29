@@ -1,3 +1,8 @@
+---
+title: Deployment
+description: Deploying mcp-test to Docker, Kubernetes, or a bare host. Distroless image, healthcheck, graceful shutdown, environment variables.
+---
+
 # Deployment
 
 mcp-test is a single Go binary. Run it next to a Postgres instance

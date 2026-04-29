@@ -1,3 +1,8 @@
+---
+title: Connect a client
+description: Wire Claude Code, raw HTTP/JSON-RPC, or the official Go SDK to a running mcp-test instance via Streamable HTTP.
+---
+
 # Connect a client
 
 mcp-test speaks the [streamable HTTP transport](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports)

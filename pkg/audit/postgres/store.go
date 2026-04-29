@@ -100,11 +100,26 @@ func (s *Store) Count(ctx context.Context, f audit.QueryFilter) (int64, error) {
 	return n, nil
 }
 
+// maxTimeSeriesBuckets caps the (to-from)/bucket count so a degenerate
+// query like "from=2000, to=2030, bucket=1s" can't force Postgres to
+// materialize billions of rows.
+const maxTimeSeriesBuckets = 5000
+
 // TimeSeries buckets events by interval. Uses date_trunc-like math via
 // interval arithmetic so we can support arbitrary bucket sizes (e.g. 5m).
+// Rejects requests whose bucket count would exceed maxTimeSeriesBuckets.
 func (s *Store) TimeSeries(ctx context.Context, from, to time.Time, bucket time.Duration) ([]audit.TimePoint, error) {
 	if bucket <= 0 {
 		bucket = time.Minute
+	}
+	// Bound the bucket count when both from and to are set.
+	if !from.IsZero() && !to.IsZero() {
+		span := to.Sub(from)
+		if span > 0 && bucket > 0 {
+			if span/bucket > maxTimeSeriesBuckets {
+				return nil, fmt.Errorf("requested time series exceeds %d buckets", maxTimeSeriesBuckets)
+			}
+		}
 	}
 	q := `
 		SELECT
@@ -197,6 +212,22 @@ func (s *Store) Stats(ctx context.Context, from, to time.Time) (audit.Stats, err
 	return s2, nil
 }
 
+// escapeLike escapes the LIKE/ILIKE meta-characters so user-supplied
+// search terms can't expand to wildcards. Postgres uses `\` as the LIKE
+// escape character by default.
+func escapeLike(s string) string {
+	if s == "" {
+		return s
+	}
+	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	// Cap at 200 chars; longer terms are operator typos or attempts to
+	// thrash the planner.
+	if len(s) > 200 {
+		s = s[:200]
+	}
+	return r.Replace(s)
+}
+
 func nullableTime(t time.Time) any {
 	if t.IsZero() {
 		return nil
@@ -252,7 +283,10 @@ func buildSelect(f audit.QueryFilter, count bool) (string, []any) {
 			"(tool_name ILIKE $%d OR error_message ILIKE $%d OR user_subject ILIKE $%d)",
 			i, i+1, i+2,
 		))
-		like := "%" + f.Search + "%"
+		// LIKE meta-characters in user input would otherwise let a single `%`
+		// match the entire table and double our DoS surface; escape them
+		// before wrapping with our own `%...%`.
+		like := "%" + escapeLike(f.Search) + "%"
 		args = append(args, like, like, like)
 		i += 3
 	}

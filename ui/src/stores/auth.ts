@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { portalAPI, clearApiKey, type Identity } from "@/lib/api";
+import { portalAPI, clearApiKey, setUnauthorizedHandler, type Identity } from "@/lib/api";
 
 type Status = "idle" | "loading" | "authenticated" | "anonymous";
 
@@ -25,9 +25,26 @@ export const useAuth = create<AuthState>((set) => ({
   signOut: async () => {
     clearApiKey();
     try {
-      await fetch("/portal/auth/logout", { method: "POST", credentials: "include" });
+      // CSRF: the request() wrapper sends X-Requested-With automatically
+      // when called via api.post; here we hit the auth endpoint directly
+      // because it's not under /api/v1/*.
+      await fetch("/portal/auth/logout", {
+        method: "POST",
+        credentials: "include",
+        headers: { "X-Requested-With": "XMLHttpRequest" },
+      });
     } catch { /* ignore */ }
     set({ identity: null, status: "anonymous" });
     window.location.href = "/portal/login";
   },
 }));
+
+// Wire the API client's 401 hook on import so any in-flight request
+// hitting an expired session immediately drops the SPA back to login.
+setUnauthorizedHandler(() => {
+  clearApiKey();
+  useAuth.setState({ identity: null, status: "anonymous" });
+  if (typeof window !== "undefined" && !window.location.pathname.endsWith("/login")) {
+    window.location.href = "/portal/login";
+  }
+});

@@ -1,6 +1,12 @@
 site_name: mcp-test
-site_url: https://mcp-test.plexara.io
-site_description: A controllable Model Context Protocol server for testing MCP gateways. Open source by Plexara.
+# Trailing slash matters: it's used as a prefix in OG/Twitter card URLs
+# and in JSON-LD, where doubling-up "//" breaks tools that don't normalize.
+site_url: https://mcp-test.plexara.io/
+site_description: >-
+  mcp-test is a controllable Model Context Protocol (MCP) server, built
+  specifically as a fixture for testing MCP gateways. Twelve deterministic
+  test tools, three real auth methods, a Postgres-backed audit log of every
+  call, and an embedded React portal. Open source by Plexara, Apache 2.0.
 site_author: Plexara
 repo_url: https://github.com/plexara/mcp-test
 repo_name: plexara/mcp-test

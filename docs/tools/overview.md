@@ -1,3 +1,8 @@
+---
+title: Tools overview
+description: Twelve test tools across four categories. The catalog and the determinism contract: same input, same output, every time.
+---
+
 # Tools overview
 
 12 tools across 4 categories. Each is an intentionally simple test

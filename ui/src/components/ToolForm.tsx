@@ -106,9 +106,11 @@ const FORMS: Record<string, Field[]> = {
 };
 
 // ToolForm renders a per-tool form (or "Run" button if no args), submits the
-// args to the admin tryit endpoint, and shows the result.
-export default function ToolForm({ toolName }: { toolName: string }) {
-  const fields = FORMS[toolName] ?? null;
+// args to the admin tryit endpoint, and shows the result. When a tool isn't
+// in the FORMS registry, fields are derived from inputSchema so newly-added
+// tools at least get a working (if plain) form.
+export default function ToolForm({ toolName, inputSchema }: { toolName: string; inputSchema?: unknown }) {
+  const fields = FORMS[toolName] ?? fieldsFromSchema(inputSchema);
   const [values, setValues] = useState<Record<string, any>>(() => initialValues(fields));
   const [showRaw, setShowRaw] = useState(false);
   const [rawError, setRawError] = useState<string | null>(null);
@@ -140,8 +142,18 @@ export default function ToolForm({ toolName }: { toolName: string }) {
 
   if (fields === null) {
     return (
-      <div className="text-sm text-muted-foreground">
-        Unknown tool <code className="mono">{toolName}</code>; no form is defined.
+      <div className="text-sm text-muted-foreground space-y-2">
+        <p>
+          No form is defined for <code className="mono">{toolName}</code> and no
+          input schema was provided.
+        </p>
+        <button
+          type="button"
+          onClick={() => m.mutate({})}
+          className="bg-primary text-primary-foreground px-4 py-1.5 rounded text-sm hover:opacity-90 transition-opacity"
+        >
+          Run with empty args
+        </button>
       </div>
     );
   }
@@ -369,6 +381,86 @@ function Result({ data }: { data: { content?: any[]; structuredContent?: any; is
 const inputCls =
   "w-full bg-background border border-input rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring";
 
+// fieldsFromSchema produces a reasonable Field[] from a JSON Schema object.
+// Returns null when the schema isn't usable (missing, not an object, or no
+// properties), in which case the caller falls back to a "Run with empty
+// args" button. Honors: type (string/integer/number/boolean), enum,
+// description, default, minimum, maximum.
+function fieldsFromSchema(schema: unknown): Field[] | null {
+  if (!schema || typeof schema !== "object") return null;
+  const s = schema as { type?: string; properties?: Record<string, JSONSchemaProp>; required?: string[] };
+  if (s.type !== "object" || !s.properties) return null;
+  const required = new Set(s.required ?? []);
+  const out: Field[] = [];
+  for (const [name, prop] of Object.entries(s.properties)) {
+    const f = fieldFromProp(name, prop, required.has(name));
+    if (f) out.push(f);
+  }
+  return out;
+}
+
+type JSONSchemaProp = {
+  type?: string | string[];
+  description?: string;
+  default?: unknown;
+  enum?: unknown[];
+  minimum?: number;
+  maximum?: number;
+  title?: string;
+};
+
+function fieldFromProp(name: string, prop: JSONSchemaProp, required: boolean): Field | null {
+  const label = prop.title ?? name;
+  const help = prop.description;
+  const t = Array.isArray(prop.type) ? prop.type[0] : prop.type;
+
+  if (Array.isArray(prop.enum) && prop.enum.length > 0) {
+    return {
+      kind: "select",
+      name,
+      label,
+      help,
+      default: typeof prop.default === "string" ? prop.default : undefined,
+      options: prop.enum.map((v) => ({ value: String(v), label: String(v) })),
+    };
+  }
+  switch (t) {
+    case "boolean":
+      return { kind: "boolean", name, label, help, default: typeof prop.default === "boolean" ? prop.default : false };
+    case "integer":
+    case "number":
+      return {
+        kind: "number",
+        name,
+        label,
+        help,
+        default: typeof prop.default === "number" ? prop.default : undefined,
+        min: prop.minimum,
+        max: prop.maximum,
+        required,
+      };
+    case "object":
+    case "array":
+      return {
+        kind: "json",
+        name,
+        label,
+        help: (help ?? "") + " (JSON)",
+        default: prop.default !== undefined ? JSON.stringify(prop.default, null, 2) : "",
+      };
+    case "string":
+    default:
+      return {
+        kind: "text",
+        name,
+        label,
+        help,
+        default: typeof prop.default === "string" ? prop.default : undefined,
+        required,
+      };
+  }
+}
+
 function initialValues(fields: Field[] | null): Record<string, any> {
   const out: Record<string, any> = {};
   if (!fields) return out;
@@ -389,6 +481,10 @@ function initialValues(fields: Field[] | null): Record<string, any> {
 // MCP tool expects. Empty optional strings/numbers are dropped. JSON fields
 // are parsed; if parsing fails, the field is sent as a string and the server
 // will reject it.
+//
+// Booleans are sent unconditionally: an unchecked checkbox must surface as
+// `false`, not be omitted (otherwise the server falls back to its default
+// and the user sees behavior that contradicts the form).
 function buildArgs(fields: Field[] | null, values: Record<string, any>): Record<string, any> {
   const out: Record<string, any> = {};
   if (!fields) return out;
@@ -403,7 +499,7 @@ function buildArgs(fields: Field[] | null, values: Record<string, any>): Record<
         if (v !== "" && v != null && !Number.isNaN(Number(v))) out[f.name] = Number(v);
         break;
       case "boolean":
-        if (v) out[f.name] = true;
+        out[f.name] = Boolean(v);
         break;
       case "select":
         if (v) out[f.name] = v;
