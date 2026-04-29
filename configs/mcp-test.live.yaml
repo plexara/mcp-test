@@ -1,0 +1,56 @@
+# Full-stack live config; used by `make dev`.
+#
+# Runs against the bundled docker-compose stack (postgres + keycloak):
+#   docker compose -f docker-compose.dev.yml up -d postgres keycloak
+#
+# Auth is real:
+#   - file API key from $MCPTEST_DEV_KEY (defaults to devkey-please-change)
+#   - DB-backed bcrypt keys (managed via /api/v1/admin/keys)
+#   - OIDC bearer tokens from Keycloak realm "mcp-test"
+# Anonymous is OFF; portal requires login.
+
+server:
+  name: mcp-test
+  address: ":${MCPTEST_PORT:-8080}"
+  base_url: "${MCPTEST_BASE_URL:-http://localhost:8080}"
+  streamable:
+    session_timeout: 30m
+
+oidc:
+  enabled: true
+  issuer: "${MCPTEST_OIDC_ISSUER:-http://localhost:8081/realms/mcp-test}"
+  audience: "${MCPTEST_OIDC_AUDIENCE:-mcp-test}"
+  client_id: "${MCPTEST_OIDC_CLIENT_ID:-mcp-test-portal}"
+  jwks_cache_ttl: 1h
+
+api_keys:
+  file:
+    - name: dev-local
+      key: "${MCPTEST_DEV_KEY:-devkey-please-change}"
+      description: "local dev key"
+  db:
+    enabled: true
+
+auth:
+  allow_anonymous: false
+  require_for_mcp: true
+  require_for_portal: true
+
+database:
+  url: "${MCPTEST_DATABASE_URL:-postgres://mcp:mcp@localhost:5432/mcp_test?sslmode=disable}"
+
+audit:
+  enabled: true
+  redact_keys: [password, token, secret, authorization, cookie, api_key, credentials]
+
+portal:
+  enabled: true
+  cookie_name: mcp_test_session
+  cookie_secret: "${MCPTEST_COOKIE_SECRET:-dev-cookie-secret-not-for-production-use-change-me}"
+  cookie_secure: false
+
+tools:
+  identity:  { enabled: true }
+  data:      { enabled: true }
+  failure:   { enabled: true }
+  streaming: { enabled: true }
