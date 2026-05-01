@@ -158,6 +158,98 @@ func TestAudit_PayloadCapture_HeadersOptIn(t *testing.T) {
 	}
 }
 
+func TestAudit_PayloadCapture_PreservesNonTextContent(t *testing.T) {
+	// An EmbeddedResource block (i.e. not text/image/audio) must fall
+	// through callToolResultToMap's JSON-marshal path so the actual
+	// resource data lands in the payload row, not a "non-textual block"
+	// placeholder. Regression coverage for M-2 in the PR review.
+	mem := audit.NewMemoryLogger()
+	chain := auth.NewChain(true, nil, nil)
+	mw := Audit(chain, mem, nil, nil, WithPayloadCapture(0))
+
+	wrapped := mw((&fakeMethodHandler{
+		res: &mcp.CallToolResult{Content: []mcp.Content{
+			&mcp.EmbeddedResource{Resource: &mcp.ResourceContents{
+				URI:      "file:///tmp/example.txt",
+				MIMEType: "text/plain",
+				Text:     "hello from the resource",
+			}},
+		}},
+	}).handle)
+
+	req := &mcp.ServerRequest[*mcp.CallToolParams]{
+		Params: &mcp.CallToolParams{Name: "echo"},
+		Extra:  &mcp.RequestExtra{Header: http.Header{}},
+	}
+	_, _ = wrapped(context.Background(), "tools/call", req)
+
+	p := mem.Snapshot()[0].Payload
+	if p == nil {
+		t.Fatal("expected payload")
+	}
+	blocks, _ := p.ResponseResult["content"].([]any)
+	if len(blocks) != 1 {
+		t.Fatalf("expected 1 block, got %d", len(blocks))
+	}
+	first, _ := blocks[0].(map[string]any)
+	if first["type"] != "resource" {
+		t.Errorf("type = %v, want \"resource\" (from MarshalJSON)", first["type"])
+	}
+	res, _ := first["resource"].(map[string]any)
+	if res == nil {
+		t.Fatalf("expected resource sub-object, got: %v", first)
+	}
+	if res["uri"] != "file:///tmp/example.txt" {
+		t.Errorf("resource.uri = %v", res["uri"])
+	}
+	if res["text"] != "hello from the resource" {
+		t.Errorf("resource.text = %v", res["text"])
+	}
+}
+
+func TestAudit_AuthFailureCarriesCategory(t *testing.T) {
+	// M-3 in the review: response_error must carry a structured
+	// category in addition to the message.
+	mem := audit.NewMemoryLogger()
+	chain := auth.NewChain(false, nil, nil) // anonymous off + no stores → fails
+	mw := Audit(chain, mem, nil, nil, WithPayloadCapture(0))
+	wrapped := mw((&fakeMethodHandler{}).handle)
+
+	req := &mcp.ServerRequest[*mcp.CallToolParams]{
+		Params: &mcp.CallToolParams{Name: "echo"},
+		Extra:  &mcp.RequestExtra{Header: http.Header{"User-Agent": []string{"x"}}},
+	}
+	_, _ = wrapped(context.Background(), "tools/call", req)
+	p := mem.Snapshot()[0].Payload
+	if p == nil {
+		t.Fatal("expected payload")
+	}
+	if p.ResponseError == nil {
+		t.Fatal("expected response_error")
+	}
+	if cat, _ := p.ResponseError["category"].(string); cat != "auth" {
+		t.Errorf("response_error.category = %q, want auth", cat)
+	}
+}
+
+func TestAudit_PayloadCaptures_DispatchedMethod(t *testing.T) {
+	// M-1 in the review: jsonrpc_method must reflect what the receiving
+	// middleware actually saw, not a hard-coded "tools/call" string.
+	mem := audit.NewMemoryLogger()
+	chain := auth.NewChain(true, nil, nil)
+	mw := Audit(chain, mem, nil, nil, WithPayloadCapture(0))
+	wrapped := mw((&fakeMethodHandler{}).handle)
+	req := &mcp.ServerRequest[*mcp.CallToolParams]{
+		Params: &mcp.CallToolParams{Name: "echo"},
+		Extra:  &mcp.RequestExtra{Header: http.Header{}},
+	}
+	_, _ = wrapped(context.Background(), "tools/call", req)
+	p := mem.Snapshot()[0].Payload
+	if p.JSONRPCMethod != "tools/call" {
+		t.Errorf("JSONRPCMethod = %q, want tools/call", p.JSONRPCMethod)
+	}
+}
+
 func TestAudit_AuthFailure_StillCapturesPayload(t *testing.T) {
 	mem := audit.NewMemoryLogger()
 	chain := auth.NewChain(false, nil, nil) // no anonymous, no stores → auth fails

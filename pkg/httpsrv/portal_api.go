@@ -3,6 +3,7 @@ package httpsrv
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -180,10 +181,10 @@ func (p *PortalAPI) auditEventDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The Logger interface doesn't have a single-event lookup; reuse Query
-	// with a bounded filter and pluck the matching row. This is O(scan)
-	// today; if event detail becomes a hot path we can add a primary-key
-	// fetch to the interface.
+	// The Logger interface doesn't expose a typed single-event lookup;
+	// reuse Query with EventID set and Limit:1. The Postgres store
+	// resolves this to a primary-key index lookup; the in-memory logger
+	// scans its slice (fine for tests).
 	events, err := p.audit.Query(r.Context(), audit.QueryFilter{Limit: 1, EventID: id})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
@@ -202,11 +203,17 @@ func (p *PortalAPI) auditEventDetail(w http.ResponseWriter, r *http.Request) {
 	ev.Payload = nil
 	if pl, ok := p.audit.(audit.PayloadLogger); ok {
 		payload, perr := pl.GetPayload(r.Context(), id)
-		if perr == nil {
+		if perr != nil {
+			// Soft-fail: the summary is real, only the detail is
+			// unavailable. Log at WARN with the event ID so operators
+			// can chase the cause without the request itself failing.
+			slog.Warn("audit: payload fetch failed",
+				"event_id", id,
+				"err", perr,
+			)
+		} else {
 			ev.Payload = payload
 		}
-		// Soft-fail on perr: the summary is real, only detail is
-		// unavailable; the binary's logs carry the error.
 	}
 
 	writeJSON(w, http.StatusOK, ev)

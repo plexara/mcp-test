@@ -28,7 +28,6 @@ func TestEvent_WithPayload_Roundtrip(t *testing.T) {
 func TestPayload_JSONShape(t *testing.T) {
 	p := &Payload{
 		JSONRPCMethod:    "tools/call",
-		JSONRPCID:        "42",
 		RequestParams:    map[string]any{"k": "v"},
 		RequestSizeBytes: 12,
 		RequestTruncated: false,
@@ -51,9 +50,8 @@ func TestPayload_JSONShape(t *testing.T) {
 	if err := json.Unmarshal(b, &round); err != nil {
 		t.Fatal(err)
 	}
-	// Sanity: every top-level key we expect is there.
 	for _, k := range []string{
-		"jsonrpc_method", "jsonrpc_id",
+		"jsonrpc_method",
 		"request_params", "request_size_bytes",
 		"response_result", "response_size_bytes",
 		"notifications",

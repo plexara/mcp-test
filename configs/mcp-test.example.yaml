@@ -60,6 +60,18 @@ audit:
   enabled: true
   retention_days: 30
   redact_keys: [password, token, secret, authorization, api_key, credentials, cookie]
+  # Inspection / debugging capture: full request and response envelopes
+  # land in the sibling audit_payloads table for portal drill-down. Set
+  # capture_payloads to false to keep audit_events summary-only.
+  capture_payloads: true
+  # Whether the redacted HTTP headers ride along on the payload row.
+  capture_headers: true
+  # Per-side cap (request, response). Content beyond is dropped and the
+  # truncated flag is set on the payload row. 64 KiB default; raise for
+  # debugging, lower in storage-constrained deployments.
+  max_payload_bytes: 65536
+  # Cap on notifications recorded per call.
+  max_notifications: 100
 
 portal:
   enabled: true

@@ -49,18 +49,22 @@ type Event struct {
 // by ID. Stored in the audit_payloads table. Each side carries a byte
 // size and a truncation flag so operators can tell whether they're
 // looking at the whole call or a capped prefix.
+//
+// Fields that the audit middleware can't populate today (the
+// transport-layer JSON-RPC ID, the inbound HTTP method and path) are
+// intentionally absent from this struct. They will land alongside a
+// transport-layer capture hook when replay-via-HTTP needs them.
 type Payload struct {
-	// JSON-RPC envelope as received.
+	// JSON-RPC method as the receiving middleware saw it (typically
+	// "tools/call"). Captured from the dispatch metadata, not the wire.
 	JSONRPCMethod    string         `json:"jsonrpc_method,omitempty"`
-	JSONRPCID        string         `json:"jsonrpc_id,omitempty"`
 	RequestParams    map[string]any `json:"request_params,omitempty"`
 	RequestSizeBytes int            `json:"request_size_bytes,omitempty"`
 	RequestTruncated bool           `json:"request_truncated,omitempty"`
 
-	// HTTP layer.
+	// HTTP layer (best-effort; only what the audit middleware can
+	// observe through ctx).
 	RequestHeaders    map[string][]string `json:"request_headers,omitempty"`
-	RequestMethod     string              `json:"request_method,omitempty"`
-	RequestPath       string              `json:"request_path,omitempty"`
 	RequestRemoteAddr string              `json:"request_remote_addr,omitempty"`
 
 	// JSON-RPC response.
@@ -152,7 +156,10 @@ func (e *Event) WithResult(success bool, errMsg string, durMS int64) *Event {
 }
 
 // WithPayload attaches a full request/response payload to the event.
-// Pass nil to clear; nil-or-zero Payload values are not persisted.
+// A non-nil pointer is persisted as a row in audit_payloads; pass nil
+// to clear (or to leave the event summary-only). The persistence layer
+// does not look at the Payload's field contents to decide whether to
+// write a row; if you don't want a payload row, pass nil.
 func (e *Event) WithPayload(p *Payload) *Event {
 	e.Payload = p
 	return e

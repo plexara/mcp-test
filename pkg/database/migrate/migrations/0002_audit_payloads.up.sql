@@ -10,32 +10,34 @@
 CREATE TABLE IF NOT EXISTS audit_payloads (
     event_id              TEXT PRIMARY KEY REFERENCES audit_events(id) ON DELETE CASCADE,
 
-    -- JSON-RPC envelope as received
+    -- JSON-RPC envelope as received. Only what the audit middleware can
+    -- observe today: the dispatched method and the params object.
     jsonrpc_method        TEXT,
-    jsonrpc_id            TEXT,
     request_params        JSONB,
     request_size_bytes    INTEGER NOT NULL DEFAULT 0,
     request_truncated     BOOLEAN NOT NULL DEFAULT false,
 
-    -- HTTP layer
+    -- HTTP layer (best-effort; only what the audit middleware can read
+    -- from ctx).
     request_headers       JSONB,
-    request_method        TEXT,
-    request_path          TEXT,
     request_remote_addr   TEXT,
 
-    -- JSON-RPC response
+    -- JSON-RPC response.
     response_result       JSONB,
     response_error        JSONB,
     response_size_bytes   INTEGER NOT NULL DEFAULT 0,
     response_truncated    BOOLEAN NOT NULL DEFAULT false,
 
-    -- Notifications fired during the call window: array of {ts, method, params}
+    -- Notifications fired during the call window: array of {ts, method, params}.
     notifications         JSONB,
 
     -- Replay linkage; ON DELETE SET NULL so deleting the original doesn't
     -- cascade into the replay's payload row.
     replayed_from         TEXT REFERENCES audit_events(id) ON DELETE SET NULL,
 
+    -- captured_at supports forensic queries ("payloads written between
+    -- t1 and t2") that the call's own audit_events.ts can't answer when
+    -- the audit pipeline is delayed (async drain backlog).
     captured_at           TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

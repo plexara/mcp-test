@@ -48,6 +48,11 @@ database:
 audit:
   enabled: true
   redact_keys: [password, token, secret, authorization, cookie, api_key, credentials, bearer, jwt, session_id, private_key]
+  # Inspection capture (default-on).
+  capture_payloads: true
+  capture_headers: true
+  max_payload_bytes: 65536
+  max_notifications: 100
 
 portal:
   enabled: true
