@@ -96,6 +96,18 @@ func (a *AsyncLogger) Stats(ctx context.Context, from, to time.Time) (Stats, err
 	return a.inner.Stats(ctx, from, to)
 }
 
+// GetPayload delegates to the inner Logger when it implements
+// PayloadLogger. Returns (nil, nil) when the underlying logger doesn't
+// persist payloads (memory, noop) so the portal API can render the
+// summary view without falling over.
+func (a *AsyncLogger) GetPayload(ctx context.Context, eventID string) (*Payload, error) {
+	pl, ok := a.inner.(PayloadLogger)
+	if !ok {
+		return nil, nil
+	}
+	return pl.GetPayload(ctx, eventID)
+}
+
 // Close stops accepting new events and waits for the queue to drain.
 func (a *AsyncLogger) Close() {
 	a.stopOnce.Do(func() { close(a.stop) })

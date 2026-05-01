@@ -8,7 +8,12 @@ import (
 	"github.com/plexara/mcp-test/pkg/auth"
 )
 
-// Event captures everything we record for one tool call (or auth failure).
+// Event captures the indexable summary of one tool call (or auth failure).
+//
+// Full request/response payloads live on the sibling Payload struct,
+// matched 1:1 by ID. The two-table layout keeps the summary small and
+// fast for time-range queries while letting operators drill into the
+// full envelope on demand.
 type Event struct {
 	ID            string         `json:"id"`
 	Timestamp     time.Time      `json:"timestamp"`
@@ -32,6 +37,52 @@ type Event struct {
 	Source        string         `json:"source"`
 	RemoteAddr    string         `json:"remote_addr,omitempty"`
 	UserAgent     string         `json:"user_agent,omitempty"`
+
+	// Payload, when non-nil, is the full request/response envelope for
+	// this event. It is written to the audit_payloads sibling table in
+	// the same transaction as the summary row. Nil means "no detail
+	// captured" (capture disabled, or this event predates capture).
+	Payload *Payload `json:"payload,omitempty"`
+}
+
+// Payload is the full request/response envelope joined 1:1 with an Event
+// by ID. Stored in the audit_payloads table. Each side carries a byte
+// size and a truncation flag so operators can tell whether they're
+// looking at the whole call or a capped prefix.
+type Payload struct {
+	// JSON-RPC envelope as received.
+	JSONRPCMethod    string         `json:"jsonrpc_method,omitempty"`
+	JSONRPCID        string         `json:"jsonrpc_id,omitempty"`
+	RequestParams    map[string]any `json:"request_params,omitempty"`
+	RequestSizeBytes int            `json:"request_size_bytes,omitempty"`
+	RequestTruncated bool           `json:"request_truncated,omitempty"`
+
+	// HTTP layer.
+	RequestHeaders    map[string][]string `json:"request_headers,omitempty"`
+	RequestMethod     string              `json:"request_method,omitempty"`
+	RequestPath       string              `json:"request_path,omitempty"`
+	RequestRemoteAddr string              `json:"request_remote_addr,omitempty"`
+
+	// JSON-RPC response.
+	ResponseResult    map[string]any `json:"response_result,omitempty"`
+	ResponseError     map[string]any `json:"response_error,omitempty"`
+	ResponseSizeBytes int            `json:"response_size_bytes,omitempty"`
+	ResponseTruncated bool           `json:"response_truncated,omitempty"`
+
+	// Notifications fired during the call window.
+	Notifications []Notification `json:"notifications,omitempty"`
+
+	// Replay linkage; if this event was a /replay of another, this
+	// points at the original event's ID.
+	ReplayedFrom string `json:"replayed_from,omitempty"`
+}
+
+// Notification is one server-initiated notification recorded during a
+// tool call (typically a progress notification, but the shape is open).
+type Notification struct {
+	Timestamp time.Time      `json:"ts"`
+	Method    string         `json:"method"`
+	Params    map[string]any `json:"params,omitempty"`
 }
 
 // NewEvent constructs an Event with sensible defaults filled in.
@@ -97,6 +148,13 @@ func (e *Event) WithResult(success bool, errMsg string, durMS int64) *Event {
 	e.Success = success
 	e.ErrorMessage = errMsg
 	e.DurationMS = durMS
+	return e
+}
+
+// WithPayload attaches a full request/response payload to the event.
+// Pass nil to clear; nil-or-zero Payload values are not persisted.
+func (e *Event) WithPayload(p *Payload) *Event {
+	e.Payload = p
 	return e
 }
 

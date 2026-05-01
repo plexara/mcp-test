@@ -26,7 +26,10 @@ func New(pool *pgxpool.Pool) *Store {
 	return &Store{pool: pool}
 }
 
-// Log inserts a single event.
+// Log inserts a single event. When ev.Payload is non-nil, the matching
+// row is also inserted into audit_payloads in the same transaction so
+// the summary and detail are committed atomically. A failure on either
+// rolls back both; the async drain treats the pair as a single drop.
 func (s *Store) Log(ctx context.Context, ev audit.Event) error {
 	if ev.ID == "" {
 		ev.ID = uuid.NewString()
@@ -40,7 +43,14 @@ func (s *Store) Log(ctx context.Context, ev audit.Event) error {
 		paramsJSON = b
 	}
 
-	_, err := s.pool.Exec(ctx, `
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	// Roll back if we don't reach the commit; safe no-op after commit.
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	_, err = tx.Exec(ctx, `
 		INSERT INTO audit_events (
 			id, ts, duration_ms, request_id, session_id,
 			user_subject, user_email, auth_type, api_key_name,
@@ -67,7 +77,173 @@ func (s *Store) Log(ctx context.Context, ev audit.Event) error {
 	if err != nil {
 		return fmt.Errorf("insert audit event: %w", err)
 	}
+
+	if ev.Payload != nil {
+		if err := insertPayload(ctx, tx, ev.ID, ev.Payload); err != nil {
+			return err
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit audit event: %w", err)
+	}
 	return nil
+}
+
+// insertPayload writes the audit_payloads row for an event. Caller must
+// hold an open tx; this function never commits or rolls back on its own.
+func insertPayload(ctx context.Context, tx pgx.Tx, eventID string, p *audit.Payload) error {
+	requestParams, err := marshalJSONB(p.RequestParams)
+	if err != nil {
+		return fmt.Errorf("marshal request_params: %w", err)
+	}
+	requestHeaders, err := marshalJSONB(p.RequestHeaders)
+	if err != nil {
+		return fmt.Errorf("marshal request_headers: %w", err)
+	}
+	responseResult, err := marshalJSONB(p.ResponseResult)
+	if err != nil {
+		return fmt.Errorf("marshal response_result: %w", err)
+	}
+	responseError, err := marshalJSONB(p.ResponseError)
+	if err != nil {
+		return fmt.Errorf("marshal response_error: %w", err)
+	}
+	notifications, err := marshalJSONB(p.Notifications)
+	if err != nil {
+		return fmt.Errorf("marshal notifications: %w", err)
+	}
+	var replayedFrom any
+	if p.ReplayedFrom != "" {
+		replayedFrom = p.ReplayedFrom
+	}
+
+	_, err = tx.Exec(ctx, `
+		INSERT INTO audit_payloads (
+			event_id,
+			jsonrpc_method, jsonrpc_id,
+			request_params, request_size_bytes, request_truncated,
+			request_headers, request_method, request_path, request_remote_addr,
+			response_result, response_error, response_size_bytes, response_truncated,
+			notifications, replayed_from
+		) VALUES (
+			$1,
+			$2, $3,
+			$4, $5, $6,
+			$7, $8, $9, $10,
+			$11, $12, $13, $14,
+			$15, $16
+		)
+	`,
+		eventID,
+		p.JSONRPCMethod, p.JSONRPCID,
+		requestParams, p.RequestSizeBytes, p.RequestTruncated,
+		requestHeaders, p.RequestMethod, p.RequestPath, p.RequestRemoteAddr,
+		responseResult, responseError, p.ResponseSizeBytes, p.ResponseTruncated,
+		notifications, replayedFrom,
+	)
+	if err != nil {
+		return fmt.Errorf("insert audit payload: %w", err)
+	}
+	return nil
+}
+
+// marshalJSONB returns the JSON encoding of v, or nil for nil/empty inputs
+// so the column stores SQL NULL (which is friendlier to JSONB queries
+// than a literal "null").
+func marshalJSONB(v any) ([]byte, error) {
+	if v == nil {
+		return nil, nil
+	}
+	switch x := v.(type) {
+	case map[string]any:
+		if len(x) == 0 {
+			return nil, nil
+		}
+	case map[string][]string:
+		if len(x) == 0 {
+			return nil, nil
+		}
+	case []audit.Notification:
+		if len(x) == 0 {
+			return nil, nil
+		}
+	}
+	return json.Marshal(v)
+}
+
+// GetPayload returns the audit_payloads row for the given event, or
+// (nil, nil) if no payload was captured. Errors other than "no rows" are
+// returned.
+func (s *Store) GetPayload(ctx context.Context, eventID string) (*audit.Payload, error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT
+			COALESCE(jsonrpc_method, ''),
+			COALESCE(jsonrpc_id, ''),
+			request_params,
+			request_size_bytes,
+			request_truncated,
+			request_headers,
+			COALESCE(request_method, ''),
+			COALESCE(request_path, ''),
+			COALESCE(request_remote_addr, ''),
+			response_result,
+			response_error,
+			response_size_bytes,
+			response_truncated,
+			notifications,
+			COALESCE(replayed_from, '')
+		FROM audit_payloads
+		WHERE event_id = $1
+	`, eventID)
+
+	var (
+		p              audit.Payload
+		paramsB        []byte
+		headersB       []byte
+		resultB        []byte
+		errB           []byte
+		notificationsB []byte
+	)
+	err := row.Scan(
+		&p.JSONRPCMethod,
+		&p.JSONRPCID,
+		&paramsB,
+		&p.RequestSizeBytes,
+		&p.RequestTruncated,
+		&headersB,
+		&p.RequestMethod,
+		&p.RequestPath,
+		&p.RequestRemoteAddr,
+		&resultB,
+		&errB,
+		&p.ResponseSizeBytes,
+		&p.ResponseTruncated,
+		&notificationsB,
+		&p.ReplayedFrom,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if len(paramsB) > 0 {
+		_ = json.Unmarshal(paramsB, &p.RequestParams)
+	}
+	if len(headersB) > 0 {
+		_ = json.Unmarshal(headersB, &p.RequestHeaders)
+	}
+	if len(resultB) > 0 {
+		_ = json.Unmarshal(resultB, &p.ResponseResult)
+	}
+	if len(errB) > 0 {
+		_ = json.Unmarshal(errB, &p.ResponseError)
+	}
+	if len(notificationsB) > 0 {
+		_ = json.Unmarshal(notificationsB, &p.Notifications)
+	}
+	return &p, nil
 }
 
 // Query returns matching events. ORDER is by ts DESC unless f.OrderDesc is false.
@@ -274,6 +450,9 @@ func buildSelect(f audit.QueryFilter, count bool) (string, []any) {
 	}
 	if f.SessionID != "" {
 		add("session_id = $%d", f.SessionID)
+	}
+	if f.EventID != "" {
+		add("id = $%d", f.EventID)
 	}
 	if f.Success != nil {
 		add("success = $%d", *f.Success)
