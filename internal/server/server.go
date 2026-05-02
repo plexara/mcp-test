@@ -164,7 +164,7 @@ func buildFromDeps(cfg *config.Config, logger *slog.Logger, chain *auth.Chain, a
 		tk.RegisterTools(mcpServer)
 	}
 	mcpServer.AddReceivingMiddleware(
-		mcpmw.Audit(chain, auditLog, cfg.Audit.RedactKeys, registry.Groups()),
+		mcpmw.Audit(chain, auditLog, cfg.Audit.RedactKeys, registry.Groups(), auditOptions(cfg.Audit)...),
 	)
 
 	readiness := httpsrv.NewReadiness()
@@ -180,6 +180,23 @@ func buildFromDeps(cfg *config.Config, logger *slog.Logger, chain *auth.Chain, a
 		readiness: readiness,
 		mux:       mux,
 	}
+}
+
+// auditOptions translates config.AuditConfig into the mcpmw.AuditOption
+// slice the middleware constructor expects. Keeping the mapping in one
+// place lets the test path (BuildWithDeps) reuse it.
+func auditOptions(cfg config.AuditConfig) []mcpmw.AuditOption {
+	var opts []mcpmw.AuditOption
+	if cfg.CapturePayloadsEnabled() {
+		opts = append(opts, mcpmw.WithPayloadCapture(cfg.MaxPayloadBytes))
+		if cfg.CaptureHeadersEnabled() {
+			opts = append(opts, mcpmw.WithHeaderCapture())
+		}
+		if cfg.MaxNotifications > 0 {
+			opts = append(opts, mcpmw.WithMaxNotifications(cfg.MaxNotifications))
+		}
+	}
+	return opts
 }
 
 func buildRegistry(cfg *config.Config) *tools.Registry {

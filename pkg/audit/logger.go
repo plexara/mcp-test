@@ -5,7 +5,10 @@ import (
 	"time"
 )
 
-// Logger writes events and queries them back for the portal.
+// Logger writes events and queries them back for the portal. Loggers
+// that capture the audit_payloads sibling row implement PayloadLogger
+// for the detail-fetch path; basic implementations (memory, noop) only
+// hold the indexable summary.
 type Logger interface {
 	Log(ctx context.Context, ev Event) error
 	Query(ctx context.Context, f QueryFilter) ([]Event, error)
@@ -13,6 +16,13 @@ type Logger interface {
 	TimeSeries(ctx context.Context, from, to time.Time, bucket time.Duration) ([]TimePoint, error)
 	Breakdown(ctx context.Context, from, to time.Time, dimension string) ([]BreakdownPoint, error)
 	Stats(ctx context.Context, from, to time.Time) (Stats, error)
+}
+
+// PayloadLogger is the optional capability for detail fetch. Stores that
+// persist the audit_payloads sibling row implement it; consumers type-
+// assert for it before calling GetPayload.
+type PayloadLogger interface {
+	GetPayload(ctx context.Context, eventID string) (*Payload, error)
 }
 
 // TimePoint is one bucket of an audit time series.
@@ -49,6 +59,7 @@ type QueryFilter struct {
 	ToolName  string
 	UserID    string
 	SessionID string
+	EventID   string // exact-match on audit_events.id (single-event fetch)
 	Success   *bool
 	Search    string
 	Limit     int

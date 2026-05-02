@@ -35,6 +35,7 @@ func (p *PortalAPI) Mount(mux *http.ServeMux, mw func(http.Handler) http.Handler
 	mux.Handle("GET /api/v1/portal/tools", mw(http.HandlerFunc(p.tools)))
 	mux.Handle("GET /api/v1/portal/tools/{name}", mw(http.HandlerFunc(p.toolDetail)))
 	mux.Handle("GET /api/v1/portal/audit/events", mw(http.HandlerFunc(p.auditEvents)))
+	mux.Handle("GET /api/v1/portal/audit/events/{id}", mw(http.HandlerFunc(p.auditEventDetail)))
 	mux.Handle("GET /api/v1/portal/audit/timeseries", mw(http.HandlerFunc(p.auditTimeseries)))
 	mux.Handle("GET /api/v1/portal/audit/breakdown", mw(http.HandlerFunc(p.auditBreakdown)))
 	mux.Handle("GET /api/v1/portal/dashboard", mw(http.HandlerFunc(p.dashboard)))
@@ -163,6 +164,52 @@ func (p *PortalAPI) auditEvents(w http.ResponseWriter, r *http.Request) {
 		"limit":  f.Limit,
 		"offset": f.Offset,
 	})
+}
+
+// auditEventDetail returns a single event identified by ID, plus its
+// audit_payloads sibling row (when capture is enabled and the row was
+// recorded). Loggers that don't persist payloads (memory, noop) return
+// the summary alone with payload omitted.
+//
+// Response shape mirrors the Event JSON marshaling; when payload was
+// captured, it appears under the "payload" key.
+func (p *PortalAPI) auditEventDetail(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("event id required"))
+		return
+	}
+
+	// The Logger interface doesn't have a single-event lookup; reuse Query
+	// with a bounded filter and pluck the matching row. This is O(scan)
+	// today; if event detail becomes a hot path we can add a primary-key
+	// fetch to the interface.
+	events, err := p.audit.Query(r.Context(), audit.QueryFilter{Limit: 1, EventID: id})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if len(events) == 0 {
+		writeError(w, http.StatusNotFound, fmt.Errorf("event %q not found", id))
+		return
+	}
+	ev := events[0]
+
+	// Payload on the in-memory event (if any) is from the original
+	// write path and shouldn't be returned to the client; the truth
+	// for "what's in the audit_payloads table" is what GetPayload
+	// returns. Reset and ask the logger.
+	ev.Payload = nil
+	if pl, ok := p.audit.(audit.PayloadLogger); ok {
+		payload, perr := pl.GetPayload(r.Context(), id)
+		if perr == nil {
+			ev.Payload = payload
+		}
+		// Soft-fail on perr: the summary is real, only detail is
+		// unavailable; the binary's logs carry the error.
+	}
+
+	writeJSON(w, http.StatusOK, ev)
 }
 
 // maxTimeseriesWindow caps the requested time-series window at 30 days

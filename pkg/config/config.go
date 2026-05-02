@@ -139,10 +139,56 @@ type DatabaseConfig struct {
 }
 
 // AuditConfig controls audit log behavior and parameter redaction.
+//
+// Payload capture (request/response envelope, headers, notifications) is
+// on by default because mcp-test is a test fixture and full visibility is
+// the entire point. Operators in privacy-sensitive deployments can flip
+// CapturePayloads off to keep only the indexable summary.
+//
+// CapturePayloads and CaptureHeaders are *bool so the YAML decoder can
+// tell "field absent" (use the default) from "explicitly set to false"
+// (operator opted out). Helper methods CapturePayloadsEnabled and
+// CaptureHeadersEnabled hide the pointer indirection from callers.
 type AuditConfig struct {
 	Enabled       bool     `yaml:"enabled"`
 	RetentionDays int      `yaml:"retention_days"`
 	RedactKeys    []string `yaml:"redact_keys"`
+
+	// CapturePayloads enables writing the audit_payloads sibling row
+	// alongside each summary. Default true (nil pointer = unset = on).
+	CapturePayloads *bool `yaml:"capture_payloads"`
+
+	// CaptureHeaders includes the redacted HTTP request headers in the
+	// payload row. Default true; set false in deployments where headers
+	// carry data the operator doesn't want stored even after redaction.
+	CaptureHeaders *bool `yaml:"capture_headers"`
+
+	// MaxPayloadBytes caps per-side (request, response) payload size.
+	// Anything beyond is dropped and the matching truncated flag is set.
+	// Default 65536.
+	MaxPayloadBytes int `yaml:"max_payload_bytes"`
+
+	// MaxNotifications caps the number of notifications stored per call.
+	// Default 100.
+	MaxNotifications int `yaml:"max_notifications"`
+}
+
+// CapturePayloadsEnabled returns true unless the operator explicitly set
+// CapturePayloads to false.
+func (a AuditConfig) CapturePayloadsEnabled() bool {
+	if a.CapturePayloads == nil {
+		return true
+	}
+	return *a.CapturePayloads
+}
+
+// CaptureHeadersEnabled returns true unless the operator explicitly set
+// CaptureHeaders to false.
+func (a AuditConfig) CaptureHeadersEnabled() bool {
+	if a.CaptureHeaders == nil {
+		return true
+	}
+	return *a.CaptureHeaders
 }
 
 // PortalConfig configures the embedded React portal and its session cookie.
@@ -231,6 +277,12 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Audit.RetentionDays == 0 {
 		c.Audit.RetentionDays = 30
+	}
+	if c.Audit.MaxPayloadBytes == 0 {
+		c.Audit.MaxPayloadBytes = 65536
+	}
+	if c.Audit.MaxNotifications == 0 {
+		c.Audit.MaxNotifications = 100
 	}
 	if len(c.Audit.RedactKeys) == 0 {
 		// Matched as case-insensitive substrings against parameter keys

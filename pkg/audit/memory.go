@@ -220,10 +220,16 @@ func breakdownKeyFn(dimension string) func(Event) string {
 }
 
 func matchesFilter(ev Event, f QueryFilter) bool {
+	if f.EventID != "" && ev.ID != f.EventID {
+		return false
+	}
 	if f.ToolName != "" && ev.ToolName != f.ToolName {
 		return false
 	}
 	if f.UserID != "" && ev.UserSubject != f.UserID {
+		return false
+	}
+	if f.SessionID != "" && ev.SessionID != f.SessionID {
 		return false
 	}
 	if !f.From.IsZero() && ev.Timestamp.Before(f.From) {
