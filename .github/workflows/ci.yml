@@ -4,11 +4,18 @@ on:
   push:
     branches: [main]
   pull_request:
+    # Skip CI on pure docs/markdown changes; the docs.yml workflow
+    # handles those and we don't want to burn CI minutes on them.
+    paths-ignore:
+      - "docs/**"
+      - "**.md"
 
-# Cancel in-flight runs for the same ref so a fast-pushing branch doesn't
-# stack queue depth.
+# Cancel in-flight runs for the same ref. github.ref differs between
+# `push` (refs/heads/X) and `pull_request` (refs/pull/N/merge), so
+# grouping on ref alone leaves push+PR runs of the same SHA both alive.
+# Use head_ref (branch name on PRs) when available so the two collapse.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 # Workflow-level read-only baseline. Each job grants only what it needs.
@@ -43,6 +50,11 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
+    # Lift CODECOV_TOKEN to job-level env so the step-level `if:`
+    # expression below can reference env.CODECOV_TOKEN. Step-level `if:`
+    # cannot read the `secrets` context directly.
+    env:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -62,8 +74,8 @@ jobs:
             exit 1
           fi
 
-      - name: go vet
-        run: go vet ./...
+      # vet is covered by golangci-lint (govet enabled in .golangci.yml);
+      # don't double-run it here.
 
       - name: Run tests with race + coverage
         run: go test -race -count=1 -coverprofile=coverage.out -covermode=atomic ./...
@@ -71,14 +83,16 @@ jobs:
       - name: Coverage gate (>=80%)
         run: ./scripts/coverage-gate.sh coverage.out 80
 
+      # Codecov upload skips when CODECOV_TOKEN isn't configured so the
+      # step doesn't pretend to upload anything. Set the secret in repo
+      # settings to enable per-PR coverage diff reporting.
       - name: Upload coverage to Codecov
+        if: ${{ env.CODECOV_TOKEN != '' }}
         uses: codecov/codecov-action@57e3a136b779b570ffcdbf80b3bdc90e7fab3de2 # v6.0.0
         with:
           files: ./coverage.out
           fail_ci_if_error: false
           verbose: true
-        env:
-          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
   build:
     name: Build
@@ -115,7 +129,9 @@ jobs:
       - name: Set up pnpm
         uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
         with:
-          version: 9
+          # Pin to the same major as release.yml so a "works on CI but
+          # fails on release" mismatch can't surface from pnpm CLI deltas.
+          version: 10
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
@@ -166,7 +182,10 @@ jobs:
       - name: Semgrep
         uses: semgrep/semgrep-action@713efdd345f3035192eaa63f56867b88e63e4e5d # v1
         with:
-          config: >-
+          # Two configs: the community Go ruleset plus our local rules.
+          # YAML list (rather than a folded scalar) so the action sees
+          # them as distinct entries even if it tightens parsing later.
+          config: |
             p/golang
             .semgrep/
 
@@ -176,10 +195,11 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
-    # Integration tests use testcontainers (Docker-in-Docker on the
+    # Integration tests use testcontainers (Docker socket on the GitHub
     # runner). Tagged `integration` so they don't fire in the default
-    # `go test ./...` invocation. Job runs on PRs touching code paths
-    # that have integration coverage and on every push to main.
+    # `go test ./...` invocation. Runs on every PR and push to main;
+    # narrow with `paths:` filters once the cost of unconditional runs
+    # outweighs the safety of always exercising them.
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -191,4 +211,8 @@ jobs:
           cache: true
 
       - name: Run integration tests
-        run: go test -tags=integration -race -count=1 -timeout=10m ./...
+        # Narrow to ./tests/... so we don't rebuild every package with
+        # the integration tag and rerun unrelated unit tests. New
+        # integration-tagged tests should live under tests/ to stay
+        # in scope.
+        run: go test -tags=integration -race -count=1 -timeout=10m ./tests/...

@@ -1,5 +1,10 @@
 name: OpenSSF Scorecard
 
+# `publish_results: true` requires the repo to be public; the Scorecard
+# workflow will hard-fail on a private fork. If this repo is ever
+# flipped to private, drop publish_results and remove the upload-sarif
+# step (or migrate to scorecard's API token mode).
+
 on:
   branch_protection_rule:
   schedule:

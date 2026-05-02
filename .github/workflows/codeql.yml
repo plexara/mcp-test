@@ -1,5 +1,11 @@
 name: CodeQL
 
+# This is the project's authoritative CodeQL configuration. If GitHub's
+# default-config CodeQL is also enabled (Settings -> Code security ->
+# Code scanning -> CodeQL analysis -> "Default"), every PR will run two
+# identical scans and bill twice. Set the default to "None" or "Custom"
+# pointing at this workflow to dedupe.
+
 on:
   push:
     branches: [main]
