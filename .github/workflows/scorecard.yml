@@ -1,0 +1,50 @@
+name: OpenSSF Scorecard
+
+# `publish_results: true` requires the repo to be public; the Scorecard
+# workflow will hard-fail on a private fork. If this repo is ever
+# flipped to private, drop publish_results and remove the upload-sarif
+# step (or migrate to scorecard's API token mode).
+
+on:
+  branch_protection_rule:
+  schedule:
+    # Saturday 01:30 UTC; offset from CodeQL's Monday cron so the two
+    # don't queue together when the runner pool is hot.
+    - cron: "30 1 * * 6"
+  push:
+    branches: [main]
+
+permissions: read-all
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      security-events: write
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Run analysis
+        uses: ossf/scorecard-action@4eaacf0543bb3f2c246792bd56e8cdeffafb205a # v2.4.3
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+
+      - name: Upload SARIF artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: SARIF file
+          path: results.sarif
+          retention-days: 5
+
+      - name: Upload to code-scanning
+        uses: github/codeql-action/upload-sarif@95e58e9a2cdfd71adc6e0353d5c52f41a045d225 # v4.35.2
+        with:
+          sarif_file: results.sarif
