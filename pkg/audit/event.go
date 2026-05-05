@@ -73,8 +73,11 @@ type Payload struct {
 	ResponseSizeBytes int            `json:"response_size_bytes,omitempty"`
 	ResponseTruncated bool           `json:"response_truncated,omitempty"`
 
-	// Notifications fired during the call window.
-	Notifications []Notification `json:"notifications,omitempty"`
+	// Notifications fired during the call window. NotificationsTruncated
+	// is set when the captured slice exceeded MaxPayloadBytes and the
+	// tail was dropped to fit; the surviving prefix is what's stored.
+	Notifications          []Notification `json:"notifications,omitempty"`
+	NotificationsTruncated bool           `json:"notifications_truncated,omitempty"`
 
 	// Replay linkage; if this event was a /replay of another, this
 	// points at the original event's ID.

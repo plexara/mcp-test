@@ -9,7 +9,7 @@ import (
 )
 
 func TestNotificationRecorder_AppendAndSnapshot(t *testing.T) {
-	r := newNotificationRecorder(0) // 0 = no cap
+	r := newNotificationRecorder(0, nil) // 0 = no cap
 	r.Append("notifications/progress", &mcp.ProgressNotificationParams{
 		Progress: 1, Total: 3, Message: "step 1/3",
 	})
@@ -33,7 +33,7 @@ func TestNotificationRecorder_AppendAndSnapshot(t *testing.T) {
 }
 
 func TestNotificationRecorder_CapDropsExcess(t *testing.T) {
-	r := newNotificationRecorder(2)
+	r := newNotificationRecorder(2, nil)
 	r.Append("notifications/progress", nil)
 	r.Append("notifications/progress", nil)
 	r.Append("notifications/progress", nil) // dropped
@@ -52,7 +52,7 @@ func TestNotificationRecorder_NilSafe(t *testing.T) {
 }
 
 func TestNotificationRecorder_ConcurrentAppend(t *testing.T) {
-	r := newNotificationRecorder(0)
+	r := newNotificationRecorder(0, nil)
 	var wg sync.WaitGroup
 	for i := 0; i < 100; i++ {
 		wg.Add(1)
@@ -86,7 +86,7 @@ func TestNotifications_NoRecorderOnCtx_NoOp(t *testing.T) {
 }
 
 func TestNotifications_RecordsWhenRecorderPresent(t *testing.T) {
-	r := newNotificationRecorder(0)
+	r := newNotificationRecorder(0, nil)
 	ctx := withRecorder(context.Background(), r)
 
 	mw := Notifications()
@@ -111,7 +111,7 @@ func TestNotifications_IgnoresNonNotificationMethods(t *testing.T) {
 	// The middleware sees every outbound method; only "notifications/*"
 	// should land in the recorder. A "ping" or "logging/*" method
 	// shouldn't.
-	r := newNotificationRecorder(0)
+	r := newNotificationRecorder(0, nil)
 	ctx := withRecorder(context.Background(), r)
 
 	mw := Notifications()
@@ -154,5 +154,45 @@ func TestParamsToMap_NilAndError(t *testing.T) {
 	// should hit the error path without panicking.
 	if got := paramsToMap(make(chan int)); got["_marshal_error"] == nil {
 		t.Errorf("expected _marshal_error key for unmarshalable input, got %+v", got)
+	}
+}
+
+func TestNotificationRecorder_AppliesRedactKeys(t *testing.T) {
+	// Notification params must be sanitized with the same redactKeys as
+	// tool params; otherwise a tool can leak a secret via NotifyProgress
+	// or LogMessage and bypass the operator's redact list.
+	r := newNotificationRecorder(0, []string{"token", "password"})
+	r.Append("notifications/progress", map[string]any{
+		"step":     1,
+		"token":    "should-be-redacted",
+		"password": "also-redacted",
+		"nested": map[string]any{
+			"safe":     "ok",
+			"apiToken": "redacted-by-substring",
+		},
+	})
+	snap := r.Snapshot()
+	if len(snap) != 1 {
+		t.Fatalf("snap len = %d", len(snap))
+	}
+	p := snap[0].Params
+	if p["token"] != "[redacted]" {
+		t.Errorf("token = %v, want [redacted]", p["token"])
+	}
+	if p["password"] != "[redacted]" {
+		t.Errorf("password = %v, want [redacted]", p["password"])
+	}
+	if p["step"] != float64(1) { // JSON round-trip: int becomes float64
+		t.Errorf("step = %v (%T), want 1", p["step"], p["step"])
+	}
+	nested, _ := p["nested"].(map[string]any)
+	if nested == nil {
+		t.Fatalf("nested missing: %+v", p)
+	}
+	if nested["safe"] != "ok" {
+		t.Errorf("nested.safe = %v, want ok", nested["safe"])
+	}
+	if nested["apiToken"] != "[redacted]" {
+		t.Errorf("nested.apiToken = %v, want [redacted] (substring match)", nested["apiToken"])
 	}
 }

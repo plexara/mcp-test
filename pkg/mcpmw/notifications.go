@@ -3,6 +3,7 @@ package mcpmw
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,20 +23,34 @@ import (
 //
 // Append is safe for concurrent use; tools that fan out goroutines can
 // each call NotifyProgress without external synchronization.
+//
+// The recorder is read once via Snapshot() right after the receiving
+// handler returns. Goroutines that fire notifications AFTER the handler
+// returns can still Append safely (the mutex makes that race-free) but
+// their entries will not be in the snapshot and are dropped silently.
+// This is a deliberate trade-off: post-return notifications are an MCP
+// anti-pattern, and the alternative (waiting for stragglers) would
+// stall the audit pipeline behind a buggy tool.
 type notificationRecorder struct {
-	mu    sync.Mutex
-	items []audit.Notification
-	max   int
+	mu         sync.Mutex
+	items      []audit.Notification
+	max        int
+	redactKeys []string
 }
 
-func newNotificationRecorder(max int) *notificationRecorder {
-	return &notificationRecorder{max: max}
+func newNotificationRecorder(max int, redactKeys []string) *notificationRecorder {
+	return &notificationRecorder{max: max, redactKeys: redactKeys}
 }
 
 // Append records one notification. Drops past the cap so a tool that
 // emits in a tight loop can't grow the recorder unboundedly. The
 // dropped count isn't surfaced today; if it matters later the type can
 // expose it.
+//
+// Notification params are run through audit.SanitizeParameters with the
+// same redactKeys configured on the Audit middleware, so a tool that
+// emits a sensitive value in a NotifyProgress message or LogMessage
+// data blob does not bypass the operator's redact list.
 func (r *notificationRecorder) Append(method string, params any) {
 	if r == nil {
 		return
@@ -48,7 +63,7 @@ func (r *notificationRecorder) Append(method string, params any) {
 	r.items = append(r.items, audit.Notification{
 		Timestamp: time.Now().UTC(),
 		Method:    method,
-		Params:    paramsToMap(params),
+		Params:    audit.SanitizeParameters(paramsToMap(params), r.redactKeys),
 	})
 }
 
@@ -123,6 +138,5 @@ func Notifications() mcp.Middleware {
 }
 
 func isNotification(method string) bool {
-	const prefix = "notifications/"
-	return len(method) >= len(prefix) && method[:len(prefix)] == prefix
+	return strings.HasPrefix(method, "notifications/")
 }

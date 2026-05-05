@@ -258,6 +258,127 @@ func TestAudit_PayloadCapturesNotifications(t *testing.T) {
 	}
 }
 
+func TestAudit_PayloadNotifications_ByteCapTrims(t *testing.T) {
+	// A LogMessage carries an arbitrary `data any` blob; a small count
+	// can still blow past max_payload_bytes. Verify the byte cap trims
+	// trailing notifications and sets NotificationsTruncated.
+	mem := audit.NewMemoryLogger()
+	chain := auth.NewChain(true, nil, nil)
+	// 600 byte cap forces a trim while leaving room for a couple of entries.
+	mw := Audit(chain, mem, nil, nil, WithPayloadCapture(600), WithMaxNotifications(20))
+	sender := Notifications()
+
+	bigData := strings.Repeat("X", 80) // each notification ~ >100 bytes JSON
+
+	wrapped := mw(func(ctx context.Context, _ string, _ mcp.Request) (mcp.Result, error) {
+		passthrough := sender(func(context.Context, string, mcp.Request) (mcp.Result, error) {
+			return nil, nil
+		})
+		for i := 0; i < 10; i++ {
+			_, _ = passthrough(ctx, "notifications/message",
+				&mcp.ServerRequest[*mcp.LoggingMessageParams]{
+					Params: &mcp.LoggingMessageParams{
+						Level: "info",
+						Data:  map[string]any{"i": i, "blob": bigData},
+					},
+				})
+		}
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "ok"}}}, nil
+	})
+
+	req := &mcp.ServerRequest[*mcp.CallToolParams]{
+		Params: &mcp.CallToolParams{Name: "noisy"},
+		Extra:  &mcp.RequestExtra{Header: http.Header{}},
+	}
+	_, _ = wrapped(context.Background(), "tools/call", req)
+
+	p := mem.Snapshot()[0].Payload
+	if p == nil {
+		t.Fatal("expected payload")
+	}
+	if !p.NotificationsTruncated {
+		t.Errorf("NotificationsTruncated = false, want true (cap 200 with 10 ~80b entries)")
+	}
+	if len(p.Notifications) >= 10 {
+		t.Errorf("notifications len = %d, want < 10 (some trimmed)", len(p.Notifications))
+	}
+	// First entry must always survive (binary-search keeps the longest fitting prefix).
+	if len(p.Notifications) == 0 {
+		t.Error("no notifications survived the trim; expected at least one")
+	}
+}
+
+func TestAudit_NotificationsRespectRedactKeys(t *testing.T) {
+	// Pipe-through: redactKeys passed to Audit must reach the recorder
+	// so notification params get the same sanitization as tool params.
+	mem := audit.NewMemoryLogger()
+	chain := auth.NewChain(true, nil, nil)
+	mw := Audit(chain, mem, []string{"token"}, nil, WithPayloadCapture(0))
+	sender := Notifications()
+
+	wrapped := mw(func(ctx context.Context, _ string, _ mcp.Request) (mcp.Result, error) {
+		passthrough := sender(func(context.Context, string, mcp.Request) (mcp.Result, error) {
+			return nil, nil
+		})
+		_, _ = passthrough(ctx, "notifications/message",
+			&mcp.ServerRequest[*mcp.LoggingMessageParams]{
+				Params: &mcp.LoggingMessageParams{
+					Level: "info",
+					Data:  map[string]any{"step": 1, "token": "leaked-secret"},
+				},
+			})
+		return &mcp.CallToolResult{}, nil
+	})
+
+	req := &mcp.ServerRequest[*mcp.CallToolParams]{
+		Params: &mcp.CallToolParams{Name: "noisy"},
+		Extra:  &mcp.RequestExtra{Header: http.Header{}},
+	}
+	_, _ = wrapped(context.Background(), "tools/call", req)
+
+	p := mem.Snapshot()[0].Payload
+	if p == nil || len(p.Notifications) != 1 {
+		t.Fatalf("expected 1 notification, got payload=%+v", p)
+	}
+	data, _ := p.Notifications[0].Params["data"].(map[string]any)
+	if data == nil {
+		t.Fatalf("data field missing/wrong type: %+v", p.Notifications[0].Params)
+	}
+	if data["token"] != "[redacted]" {
+		t.Errorf("token = %v, want [redacted]", data["token"])
+	}
+}
+
+func TestAudit_HandlerErrorCategoryMatchesPayload(t *testing.T) {
+	// The post-call categorization must set ev.ErrorCategory and the
+	// payload's response_error.category to the same value. Previously
+	// "handler" went into the payload but ev.ErrorCategory was left
+	// empty, so the indexed field disagreed with the detail row.
+	mem := audit.NewMemoryLogger()
+	chain := auth.NewChain(true, nil, nil)
+	mw := Audit(chain, mem, nil, nil, WithPayloadCapture(0))
+
+	wrapped := mw(func(context.Context, string, mcp.Request) (mcp.Result, error) {
+		return nil, errors.New("handler exploded")
+	})
+	req := &mcp.ServerRequest[*mcp.CallToolParams]{
+		Params: &mcp.CallToolParams{Name: "broken"},
+		Extra:  &mcp.RequestExtra{Header: http.Header{}},
+	}
+	_, _ = wrapped(context.Background(), "tools/call", req)
+
+	ev := mem.Snapshot()[0]
+	if ev.ErrorCategory != "handler" {
+		t.Errorf("ev.ErrorCategory = %q, want handler", ev.ErrorCategory)
+	}
+	if ev.Payload == nil || ev.Payload.ResponseError == nil {
+		t.Fatalf("expected payload with response_error, got %+v", ev.Payload)
+	}
+	if ev.Payload.ResponseError["category"] != "handler" {
+		t.Errorf("payload category = %v, want handler", ev.Payload.ResponseError["category"])
+	}
+}
+
 func TestAudit_AuthFailureCarriesCategory(t *testing.T) {
 	// M-3 in the review: response_error must carry a structured
 	// category in addition to the message.

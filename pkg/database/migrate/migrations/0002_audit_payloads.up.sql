@@ -29,7 +29,10 @@ CREATE TABLE IF NOT EXISTS audit_payloads (
     response_truncated    BOOLEAN NOT NULL DEFAULT false,
 
     -- Notifications fired during the call window: array of {ts, method, params}.
-    notifications         JSONB,
+    -- notifications_truncated is set when the captured slice was trimmed
+    -- to fit max_payload_bytes; the prefix is what's stored.
+    notifications            JSONB,
+    notifications_truncated  BOOLEAN NOT NULL DEFAULT false,
 
     -- Replay linkage; ON DELETE SET NULL so deleting the original doesn't
     -- cascade into the replay's payload row.

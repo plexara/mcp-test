@@ -127,14 +127,14 @@ func insertPayload(ctx context.Context, tx pgx.Tx, eventID string, p *audit.Payl
 			request_params, request_size_bytes, request_truncated,
 			request_headers, request_remote_addr,
 			response_result, response_error, response_size_bytes, response_truncated,
-			notifications, replayed_from
+			notifications, notifications_truncated, replayed_from
 		) VALUES (
 			$1,
 			$2,
 			$3, $4, $5,
 			$6, $7,
 			$8, $9, $10, $11,
-			$12, $13
+			$12, $13, $14
 		)
 	`,
 		eventID,
@@ -142,7 +142,7 @@ func insertPayload(ctx context.Context, tx pgx.Tx, eventID string, p *audit.Payl
 		requestParams, p.RequestSizeBytes, p.RequestTruncated,
 		requestHeaders, p.RequestRemoteAddr,
 		responseResult, responseError, p.ResponseSizeBytes, p.ResponseTruncated,
-		notifications, replayedFrom,
+		notifications, p.NotificationsTruncated, replayedFrom,
 	)
 	if err != nil {
 		return fmt.Errorf("insert audit payload: %w", err)
@@ -198,6 +198,7 @@ func (s *Store) GetPayload(ctx context.Context, eventID string) (*audit.Payload,
 			response_size_bytes,
 			response_truncated,
 			notifications,
+			notifications_truncated,
 			COALESCE(replayed_from, '')
 		FROM audit_payloads
 		WHERE event_id = $1
@@ -223,6 +224,7 @@ func (s *Store) GetPayload(ctx context.Context, eventID string) (*audit.Payload,
 		&p.ResponseSizeBytes,
 		&p.ResponseTruncated,
 		&notificationsB,
+		&p.NotificationsTruncated,
 		&p.ReplayedFrom,
 	)
 	if err != nil {

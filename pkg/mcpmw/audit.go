@@ -139,12 +139,13 @@ func Audit(chain *auth.Chain, logger audit.Logger, redactKeys []string, toolGrou
 			// Seed a notification recorder onto ctx if payload capture is
 			// on. The Notifications() sending middleware reads this off
 			// ctx and appends as the tool fires NotifyProgress / Log /
-			// other notifications/* methods. Always create when capture
-			// is enabled so a payload row exists with an empty
-			// notifications array rather than absent.
+			// other notifications/* methods. The recorder applies the
+			// same redactKeys as the rest of the audit pipeline, so a
+			// tool that emits a sensitive value through NotifyProgress
+			// or LogMessage cannot bypass the operator's redact list.
 			var recorder *notificationRecorder
 			if o.capturePayloads {
-				recorder = newNotificationRecorder(o.maxNotifications)
+				recorder = newNotificationRecorder(o.maxNotifications, redactKeys)
 				ctx = withRecorder(ctx, recorder)
 			}
 
@@ -158,13 +159,13 @@ func Audit(chain *auth.Chain, logger audit.Logger, redactKeys []string, toolGrou
 				ev.WithResponseSize(chars, blocks)
 				if cr.IsError && err == nil {
 					ev.Success = false
-					ev.ErrorCategory = "tool"
 					errCategory = "tool"
 				}
 			}
 			if errCategory == "" && err != nil {
 				errCategory = "handler"
 			}
+			ev.ErrorCategory = errCategory
 			if o.capturePayloads {
 				ev.WithPayload(buildPayload(ctx, method, params, redactKeys, cr, err, errCategory, o, recorder.Snapshot()))
 			}
@@ -253,16 +254,41 @@ func buildPayload(
 		p.ResponseError = errPayload
 	}
 
-	// Notifications captured by the recorder, capped per opts.
+	// Notifications: the recorder already capped count at Append time.
+	// Apply a byte cap here too: a LogMessage carries an arbitrary
+	// `data any` blob, so a small count of notifications can still
+	// exceed maxPayloadBytes. Trim from the tail until the slice fits;
+	// flag truncation if anything was dropped.
 	if len(notifications) > 0 {
-		max := opts.maxNotifications
-		if max > 0 && len(notifications) > max {
-			notifications = notifications[:max]
-		}
+		notifications, p.NotificationsTruncated = fitNotifications(notifications, opts.maxPayloadBytes)
 		p.Notifications = notifications
 	}
 
 	return p
+}
+
+// fitNotifications trims trailing entries until the slice's JSON encoding
+// fits in max bytes. Returns the surviving prefix and whether anything
+// was dropped. A non-positive max means "no limit". An empty input is a
+// pass-through.
+func fitNotifications(in []audit.Notification, max int) ([]audit.Notification, bool) {
+	if len(in) == 0 || max <= 0 {
+		return in, false
+	}
+	if _, ok := jsonSizeWithin(in, max); ok {
+		return in, false
+	}
+	// Binary search for the longest prefix that fits, then return it.
+	lo, hi := 0, len(in)
+	for lo < hi {
+		mid := (lo + hi + 1) / 2
+		if _, ok := jsonSizeWithin(in[:mid], max); ok {
+			lo = mid
+		} else {
+			hi = mid - 1
+		}
+	}
+	return in[:lo], true
 }
 
 // callToolResultToMap renders a CallToolResult in the same shape the
@@ -315,24 +341,30 @@ func callToolResultToMap(cr *mcp.CallToolResult) map[string]any {
 // "type" tag, so the resulting map is the same thing a peer client
 // would receive. If marshal fails (it shouldn't for SDK types), we
 // surface the failure rather than dropping the block.
+//
+// Sentinel "type" values distinguish the three failure modes so the
+// portal can render them differently and operators can grep for them:
+//   - "_marshal_error": the SDK content's MarshalJSON returned an error
+//   - "_unmarshal_error": marshal succeeded but the bytes weren't an object
+//   - "_no_type": the SDK marshaled the content without a "type" field
 func contentToGenericMap(c mcp.Content) map[string]any {
 	b, err := json.Marshal(c)
 	if err != nil {
 		return map[string]any{
-			"type":         "unknown",
-			"marshalError": err.Error(),
+			"type":          "_marshal_error",
+			"marshal_error": err.Error(),
 		}
 	}
 	var m map[string]any
 	if err := json.Unmarshal(b, &m); err != nil {
 		return map[string]any{
-			"type":           "unknown",
-			"unmarshalError": err.Error(),
-			"raw":            string(b),
+			"type":            "_unmarshal_error",
+			"unmarshal_error": err.Error(),
+			"raw":             string(b),
 		}
 	}
 	if _, hasType := m["type"]; !hasType {
-		m["type"] = "unknown"
+		m["type"] = "_no_type"
 	}
 	return m
 }
