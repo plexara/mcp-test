@@ -136,6 +136,18 @@ func Audit(chain *auth.Chain, logger audit.Logger, redactKeys []string, toolGrou
 
 			ev.WithParameters(audit.SanitizeParameters(params, redactKeys))
 
+			// Seed a notification recorder onto ctx if payload capture is
+			// on. The Notifications() sending middleware reads this off
+			// ctx and appends as the tool fires NotifyProgress / Log /
+			// other notifications/* methods. Always create when capture
+			// is enabled so a payload row exists with an empty
+			// notifications array rather than absent.
+			var recorder *notificationRecorder
+			if o.capturePayloads {
+				recorder = newNotificationRecorder(o.maxNotifications)
+				ctx = withRecorder(ctx, recorder)
+			}
+
 			res, err := next(ctx, method, req)
 			ev.WithResult(err == nil, errString(err), time.Since(start).Milliseconds())
 			var cr *mcp.CallToolResult
@@ -150,11 +162,11 @@ func Audit(chain *auth.Chain, logger audit.Logger, redactKeys []string, toolGrou
 					errCategory = "tool"
 				}
 			}
-			if err != nil {
+			if errCategory == "" && err != nil {
 				errCategory = "handler"
 			}
 			if o.capturePayloads {
-				ev.WithPayload(buildPayload(ctx, method, params, redactKeys, cr, err, errCategory, o, nil))
+				ev.WithPayload(buildPayload(ctx, method, params, redactKeys, cr, err, errCategory, o, recorder.Snapshot()))
 			}
 			_ = logger.Log(ctx, *ev)
 			return res, err

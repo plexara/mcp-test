@@ -207,6 +207,57 @@ func TestAudit_PayloadCapture_PreservesNonTextContent(t *testing.T) {
 	}
 }
 
+func TestAudit_PayloadCapturesNotifications(t *testing.T) {
+	// End-to-end: Audit (receiving) seeds a recorder onto ctx; the
+	// fake handler simulates a tool firing notifications by calling
+	// the Notifications sending middleware against the same ctx.
+	// The captured slice must land in Payload.Notifications.
+	mem := audit.NewMemoryLogger()
+	chain := auth.NewChain(true, nil, nil)
+	mw := Audit(chain, mem, nil, nil, WithPayloadCapture(0), WithMaxNotifications(10))
+	sender := Notifications()
+
+	wrapped := mw(func(ctx context.Context, _ string, _ mcp.Request) (mcp.Result, error) {
+		// Simulate the tool firing two progress notifications via the
+		// sending pipeline. In the real server the tool calls
+		// req.Session.NotifyProgress which dispatches through the
+		// sending middleware chain; here we invoke the sending
+		// middleware directly with the same ctx.
+		passthrough := sender(func(context.Context, string, mcp.Request) (mcp.Result, error) {
+			return nil, nil
+		})
+		_, _ = passthrough(ctx, "notifications/progress",
+			&mcp.ServerRequest[*mcp.ProgressNotificationParams]{
+				Params: &mcp.ProgressNotificationParams{Progress: 1, Total: 3, Message: "step 1"},
+			})
+		_, _ = passthrough(ctx, "notifications/progress",
+			&mcp.ServerRequest[*mcp.ProgressNotificationParams]{
+				Params: &mcp.ProgressNotificationParams{Progress: 2, Total: 3, Message: "step 2"},
+			})
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "done"}}}, nil
+	})
+
+	req := &mcp.ServerRequest[*mcp.CallToolParams]{
+		Params: &mcp.CallToolParams{Name: "progress"},
+		Extra:  &mcp.RequestExtra{Header: http.Header{}},
+	}
+	_, _ = wrapped(context.Background(), "tools/call", req)
+
+	p := mem.Snapshot()[0].Payload
+	if p == nil {
+		t.Fatal("expected payload")
+	}
+	if len(p.Notifications) != 2 {
+		t.Fatalf("captured %d notifications, want 2", len(p.Notifications))
+	}
+	if p.Notifications[0].Method != "notifications/progress" {
+		t.Errorf("Method = %q", p.Notifications[0].Method)
+	}
+	if p.Notifications[0].Params["message"] != "step 1" {
+		t.Errorf("Params[message] = %v", p.Notifications[0].Params["message"])
+	}
+}
+
 func TestAudit_AuthFailureCarriesCategory(t *testing.T) {
 	// M-3 in the review: response_error must carry a structured
 	// category in addition to the message.
