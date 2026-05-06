@@ -51,20 +51,37 @@ func newNotificationRecorder(max int, redactKeys []string) *notificationRecorder
 // same redactKeys configured on the Audit middleware, so a tool that
 // emits a sensitive value in a NotifyProgress message or LogMessage
 // data blob does not bypass the operator's redact list.
+//
+// Concurrency: the JSON round-trip and sanitize pass run BEFORE the
+// mutex is taken so concurrent NotifyProgress calls don't serialize
+// behind one another's marshal cost. We do a quick locked cap check
+// first to skip the work entirely when the recorder is already full;
+// the second check after re-acquiring the lock guards against the race
+// between the two locks.
 func (r *notificationRecorder) Append(method string, params any) {
 	if r == nil {
 		return
 	}
+	// Fast path: bail without allocating if we're already at cap.
+	r.mu.Lock()
+	full := r.max > 0 && len(r.items) >= r.max
+	r.mu.Unlock()
+	if full {
+		return
+	}
+
+	note := audit.Notification{
+		Timestamp: time.Now().UTC(),
+		Method:    method,
+		Params:    audit.SanitizeParameters(paramsToMap(params), r.redactKeys),
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.max > 0 && len(r.items) >= r.max {
 		return
 	}
-	r.items = append(r.items, audit.Notification{
-		Timestamp: time.Now().UTC(),
-		Method:    method,
-		Params:    audit.SanitizeParameters(paramsToMap(params), r.redactKeys),
-	})
+	r.items = append(r.items, note)
 }
 
 // Snapshot returns a copy of the recorded notifications. Caller must not

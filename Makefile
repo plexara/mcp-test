@@ -35,19 +35,28 @@ UI_EMBED_DIR := ./internal/ui/dist
 GOLANGCI_LINT_VERSION := v2.11.4
 GOSEC_VERSION         := v2.25.0
 
+# Project-local tool dir. We pin lint/security tools here rather than
+# relying on whatever's on $PATH; otherwise a developer's brew-installed
+# (or newer GOPATH-installed) binary can pass `make verify` while the
+# pinned CI version fails. The directory lives under $(BUILD_DIR) so it's
+# already gitignored via /bin/.
+TOOLS_DIR := $(abspath $(BUILD_DIR)/tools)
+
 GO       := go
 GOTEST   := $(GO) test
 GOBUILD  := $(GO) build
 GOMOD    := $(GO) mod
 GOFMT    := gofmt
-GOLINT   := golangci-lint
+GOLINT   := $(TOOLS_DIR)/golangci-lint
+GOSEC    := $(TOOLS_DIR)/gosec
+GOVULN   := $(TOOLS_DIR)/govulncheck
 
 .PHONY: all build test test-short bench fmt fmt-check vet tidy clean help dev-secrets \
         ui ui-dev ui-clean embed-clean \
         lint security gosec govulncheck \
         coverage coverage-gate coverage-report \
         dead-code mutate semgrep \
-        verify tools-check \
+        verify tools-check tools-install \
         dev dev-anon dev-up dev-wait dev-ui-if-needed dev-down dev-logs \
         docker docs docs-serve screenshots run version
 
@@ -120,20 +129,20 @@ embed-clean:
 	@mkdir -p $(UI_EMBED_DIR)
 	@touch $(UI_EMBED_DIR)/.gitkeep
 
-## lint: golangci-lint run
-lint:
-	@echo "Running golangci-lint..."
-	$(GOLINT) run
+## lint: golangci-lint run (pinned version from $(TOOLS_DIR))
+lint: tools-check
+	@echo "Running golangci-lint $(GOLANGCI_LINT_VERSION)..."
+	$(GOLINT) run --timeout=5m
 
-## gosec: Static security analyzer
-gosec:
-	@echo "Running gosec..."
-	gosec -quiet ./...
+## gosec: Static security analyzer (pinned version from $(TOOLS_DIR))
+gosec: tools-check
+	@echo "Running gosec $(GOSEC_VERSION)..."
+	$(GOSEC) -quiet ./...
 
 ## govulncheck: Known-vulnerability scan
-govulncheck:
+govulncheck: tools-check
 	@echo "Running govulncheck..."
-	govulncheck ./...
+	$(GOVULN) ./...
 
 ## security: gosec + govulncheck
 security: gosec govulncheck
@@ -180,22 +189,30 @@ mutate:
 	@echo "Running gremlins (mutation testing)..."
 	gremlins unleash --workers 4 --tags-filter "!integration" ./...
 
-## tools-check: Verify required tools are installed before running verify
-tools-check:
-	@echo "Checking required tools..."
-	@missing=""; \
-	which $(GOLINT) > /dev/null 2>&1     || missing="$$missing  golangci-lint: go install github.com/golangci/golangci-lint/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)\n"; \
-	which gosec > /dev/null 2>&1         || missing="$$missing  gosec:         go install github.com/securego/gosec/v2/cmd/gosec@$(GOSEC_VERSION)\n"; \
-	which govulncheck > /dev/null 2>&1   || missing="$$missing  govulncheck:   go install golang.org/x/vuln/cmd/govulncheck@latest\n"; \
-	if [ -n "$$missing" ]; then \
-		echo ""; \
-		echo "FAIL: missing required tools for 'make verify':"; \
-		printf "$$missing"; \
-		echo ""; \
-		exit 1; \
-	fi
-	@echo "All required tools found."
-	@# Optional tools; warn but don't fail.
+## tools-install: Install lint/security tools at the pinned versions into $(TOOLS_DIR).
+##                 Idempotent; the stamp file skips reinstall when the pinned
+##                 versions are already there. Delete bin/tools/.installed to
+##                 force a reinstall (or just bump the pinned vars).
+TOOLS_STAMP := $(TOOLS_DIR)/.installed-$(GOLANGCI_LINT_VERSION)-$(GOSEC_VERSION)
+tools-install: $(TOOLS_STAMP)
+
+$(TOOLS_STAMP):
+	@echo "Installing pinned tools into $(TOOLS_DIR)..."
+	@mkdir -p $(TOOLS_DIR)
+	@rm -f $(TOOLS_DIR)/.installed-* 2>/dev/null || true
+	GOBIN=$(TOOLS_DIR) $(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
+	GOBIN=$(TOOLS_DIR) $(GO) install github.com/securego/gosec/v2/cmd/gosec@$(GOSEC_VERSION)
+	GOBIN=$(TOOLS_DIR) $(GO) install golang.org/x/vuln/cmd/govulncheck@latest
+	@touch $@
+
+## tools-check: Verify pinned lint/security tools are present at the right versions.
+##              Auto-installs (via tools-install) when missing or stale.
+tools-check: tools-install
+	@echo "Tools pinned at $(TOOLS_DIR):"
+	@echo "  golangci-lint: $$($(GOLINT) --version 2>/dev/null | head -1)"
+	@echo "  gosec:         $$($(GOSEC) --version 2>/dev/null | head -1)"
+	@echo "  govulncheck:   $$(test -x $(GOVULN) && echo present || echo MISSING)"
+	@# Optional tools (informational); warn but don't fail.
 	@which deadcode > /dev/null 2>&1 || echo "  (optional) deadcode not installed: go install golang.org/x/tools/cmd/deadcode@latest"
 	@which semgrep  > /dev/null 2>&1 || echo "  (optional) semgrep  not installed: pip3 install semgrep"
 	@which gremlins > /dev/null 2>&1 || echo "  (optional) gremlins not installed: go install github.com/go-gremlins/gremlins/cmd/gremlins@latest"

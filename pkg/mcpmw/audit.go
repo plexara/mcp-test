@@ -271,24 +271,35 @@ func buildPayload(
 // fits in max bytes. Returns the surviving prefix and whether anything
 // was dropped. A non-positive max means "no limit". An empty input is a
 // pass-through.
+//
+// Single linear pass: marshal each entry once, accumulate, stop the
+// moment the running size would exceed max. Cheaper and simpler than
+// the prior binary-search version which re-marshaled growing prefixes.
+// Overhead per entry is bounded by the entry's own JSON size, which is
+// already capped by the recorder's count cap and the upstream payload
+// byte cap.
 func fitNotifications(in []audit.Notification, max int) ([]audit.Notification, bool) {
 	if len(in) == 0 || max <= 0 {
 		return in, false
 	}
-	if _, ok := jsonSizeWithin(in, max); ok {
-		return in, false
-	}
-	// Binary search for the longest prefix that fits, then return it.
-	lo, hi := 0, len(in)
-	for lo < hi {
-		mid := (lo + hi + 1) / 2
-		if _, ok := jsonSizeWithin(in[:mid], max); ok {
-			lo = mid
-		} else {
-			hi = mid - 1
+	const brackets = 2 // "[" + "]"
+	running := brackets
+	for i, n := range in {
+		b, err := json.Marshal(n)
+		if err != nil {
+			// A single bad entry shouldn't poison the whole slice; drop
+			// it and any tail by reporting truncation at this index.
+			return in[:i], true
+		}
+		if i > 0 {
+			running++ // ","
+		}
+		running += len(b)
+		if running > max {
+			return in[:i], true
 		}
 	}
-	return in[:lo], true
+	return in, false
 }
 
 // callToolResultToMap renders a CallToolResult in the same shape the

@@ -76,6 +76,7 @@ func TestStore_LogPayload_RoundtripAndCascade(t *testing.T) {
 					Params:    map[string]any{"step": 1, "total": 5},
 				},
 			},
+			NotificationsTruncated: true,
 		},
 	}
 	if err := store.Log(ctx, ev); err != nil {
@@ -110,6 +111,9 @@ func TestStore_LogPayload_RoundtripAndCascade(t *testing.T) {
 	}
 	if len(got.Notifications) != 1 || got.Notifications[0].Method != "notifications/progress" {
 		t.Errorf("notifications lost: %+v", got.Notifications)
+	}
+	if !got.NotificationsTruncated {
+		t.Errorf("NotificationsTruncated lost: got false, want true")
 	}
 
 	// Cascade: deleting the audit_events row should drop the payload.

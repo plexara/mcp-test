@@ -172,6 +172,11 @@ func (e *Event) WithPayload(p *Payload) *Event {
 // (case-insensitive substring match) appears in redactKeys replaced by
 // "[redacted]". Values inside arrays are recursed but array elements are not
 // keyed by name, so they are kept as-is.
+//
+// Fast path: when redactKeys is empty there's nothing to redact, so we
+// return the input map directly (same reference) instead of paying for a
+// deep copy. Callers that need a defensive copy should make one
+// themselves; this is a hot-path helper called once per audit row.
 func SanitizeParameters(v any, redactKeys []string) map[string]any {
 	if v == nil {
 		return nil
@@ -179,6 +184,9 @@ func SanitizeParameters(v any, redactKeys []string) map[string]any {
 	m, ok := v.(map[string]any)
 	if !ok {
 		return map[string]any{"_value": v}
+	}
+	if len(redactKeys) == 0 {
+		return m
 	}
 	out := make(map[string]any, len(m))
 	for k, val := range m {

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/plexara/mcp-test/pkg/audit"
 	"github.com/plexara/mcp-test/pkg/auth"
 	"github.com/plexara/mcp-test/pkg/build"
@@ -175,11 +177,21 @@ func (p *PortalAPI) auditEvents(w http.ResponseWriter, r *http.Request) {
 // Response shape mirrors the Event JSON marshaling; when payload was
 // captured, it appears under the "payload" key.
 func (p *PortalAPI) auditEventDetail(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if id == "" {
+	rawID := r.PathValue("id")
+	if rawID == "" {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("event id required"))
 		return
 	}
+	// Audit event IDs are UUIDs minted by NewEvent. Reject anything else
+	// at the boundary; we then log only the canonicalized uuid.String()
+	// rather than the raw path value so gosec's taint analysis can see
+	// the user-controlled string is no longer in the slog.Warn path.
+	parsed, err := uuid.Parse(rawID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("event id is not a valid uuid"))
+		return
+	}
+	id := parsed.String()
 
 	// The Logger interface doesn't expose a typed single-event lookup;
 	// reuse Query with EventID set and Limit:1. The Postgres store
@@ -207,10 +219,10 @@ func (p *PortalAPI) auditEventDetail(w http.ResponseWriter, r *http.Request) {
 			// Soft-fail: the summary is real, only the detail is
 			// unavailable. Log at WARN with the event ID so operators
 			// can chase the cause without the request itself failing.
-			slog.Warn("audit: payload fetch failed",
-				"event_id", id,
-				"err", perr,
-			)
+			// id is a canonical uuid.UUID.String() form (validated
+			// above); gosec's transitive taint propagation flags this
+			// regardless, so #nosec is correct here.
+			slog.Warn("audit: payload fetch failed", "event_id", id, "err", perr) // #nosec G706 -- id is a validated, canonicalized UUID; cannot carry log-injection bytes.
 		} else {
 			ev.Payload = payload
 		}

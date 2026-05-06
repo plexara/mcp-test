@@ -157,6 +157,26 @@ func TestParamsToMap_NilAndError(t *testing.T) {
 	}
 }
 
+func TestNotificationRecorder_PostSnapshotAppendsAreDropped(t *testing.T) {
+	// The doc comment promises that goroutines firing notifications
+	// after the receiving handler returns Snapshot()-ed are silently
+	// dropped from THAT snapshot. Lock that contract.
+	r := newNotificationRecorder(0, nil)
+	r.Append("notifications/progress", map[string]any{"step": 1})
+	first := r.Snapshot()
+	if len(first) != 1 {
+		t.Fatalf("first snapshot len = %d, want 1", len(first))
+	}
+	r.Append("notifications/progress", map[string]any{"step": 2})
+	if len(first) != 1 {
+		t.Errorf("snapshot copy was mutated retroactively: len = %d", len(first))
+	}
+	second := r.Snapshot()
+	if len(second) != 2 {
+		t.Errorf("second snapshot len = %d, want 2 (post-snapshot Append must persist on the recorder)", len(second))
+	}
+}
+
 func TestNotificationRecorder_AppliesRedactKeys(t *testing.T) {
 	// Notification params must be sanitized with the same redactKeys as
 	// tool params; otherwise a tool can leak a secret via NotifyProgress
