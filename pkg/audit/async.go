@@ -108,6 +108,29 @@ func (a *AsyncLogger) GetPayload(ctx context.Context, eventID string) (*Payload,
 	return pl.GetPayload(ctx, eventID)
 }
 
+// Stream delegates to the inner Logger when it implements StreamingLogger.
+// Falls back to a buffered Query when not, capped at the Limit on f
+// (or a default 10000) so the export endpoint can still serve a
+// bounded result without unbounded memory.
+func (a *AsyncLogger) Stream(ctx context.Context, f QueryFilter, fn func(Event) error) error {
+	if sl, ok := a.inner.(StreamingLogger); ok {
+		return sl.Stream(ctx, f, fn)
+	}
+	if f.Limit <= 0 {
+		f.Limit = 10000
+	}
+	evs, err := a.inner.Query(ctx, f)
+	if err != nil {
+		return err
+	}
+	for _, ev := range evs {
+		if err := fn(ev); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Close stops accepting new events and waits for the queue to drain.
 func (a *AsyncLogger) Close() {
 	a.stopOnce.Do(func() { close(a.stop) })
@@ -176,4 +199,9 @@ func (NoopLogger) Breakdown(context.Context, time.Time, time.Time, string) ([]Br
 // Stats returns zeroed stats.
 func (NoopLogger) Stats(context.Context, time.Time, time.Time) (Stats, error) {
 	return Stats{}, nil
+}
+
+// Stream is a no-op: the noop logger has nothing to iterate.
+func (NoopLogger) Stream(context.Context, QueryFilter, func(Event) error) error {
+	return nil
 }

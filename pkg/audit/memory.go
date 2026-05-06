@@ -62,6 +62,26 @@ func (m *MemoryLogger) Count(ctx context.Context, f QueryFilter) (int64, error) 
 	return int64(len(evs)), nil
 }
 
+// Stream calls fn once per matching event, in the same order Query would
+// return them. Used by the NDJSON export to avoid loading the full
+// result set into memory; for the in-memory logger the savings are
+// theoretical, but the contract matches the Postgres store's cursor.
+func (m *MemoryLogger) Stream(ctx context.Context, f QueryFilter, fn func(Event) error) error {
+	evs, err := m.Query(ctx, f)
+	if err != nil {
+		return err
+	}
+	for _, ev := range evs {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if err := fn(ev); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Snapshot returns a copy of all events in insertion order, for assertions.
 func (m *MemoryLogger) Snapshot() []Event {
 	m.mu.Lock()
@@ -240,6 +260,116 @@ func matchesFilter(ev Event, f QueryFilter) bool {
 	}
 	if f.Success != nil && ev.Success != *f.Success {
 		return false
+	}
+	if !matchesJSONFilters(ev, f.JSONFilters) {
+		return false
+	}
+	if !matchesHasKeys(ev, f.HasKeys) {
+		return false
+	}
+	return true
+}
+
+// matchesJSONFilters runs each JSONPathFilter against ev.Payload using
+// the same path semantics the Postgres store will compile to JSONB
+// containment. Returns false the moment any filter misses; an event
+// with no payload row fails any non-empty filter.
+func matchesJSONFilters(ev Event, fs []JSONPathFilter) bool {
+	if len(fs) == 0 {
+		return true
+	}
+	if ev.Payload == nil {
+		return false
+	}
+	for _, jf := range fs {
+		var src map[string]any
+		switch jf.Source {
+		case "param":
+			src = ev.Payload.RequestParams
+		case "response":
+			src = ev.Payload.ResponseResult
+		case "header":
+			// Headers are map[string][]string in Go but stored as JSONB
+			// objects on disk (Postgres serializes them as arrays of
+			// strings). For MemoryLogger we adapt: a path like "User-Agent"
+			// matches the first header value.
+			if ev.Payload.RequestHeaders == nil {
+				return false
+			}
+			if len(jf.Path) == 0 {
+				return false
+			}
+			values, ok := ev.Payload.RequestHeaders[jf.Path[0]]
+			if !ok || len(values) == 0 {
+				return false
+			}
+			want := ParseJSONFilterValue(jf.Value)
+			matched := false
+			for _, v := range values {
+				if jsonEqual(v, want) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return false
+			}
+			continue
+		default:
+			return false
+		}
+		if src == nil {
+			return false
+		}
+		want := ParseJSONFilterValue(jf.Value)
+		if !MatchJSONPath(src, jf.Path, want) {
+			return false
+		}
+	}
+	return true
+}
+
+// matchesHasKeys returns false when any required has= column is missing
+// from the event's payload. AllowedHasKeys is the closed set; anything
+// else returns false (the HTTP layer should have rejected it earlier,
+// but defense in depth).
+func matchesHasKeys(ev Event, keys []string) bool {
+	if len(keys) == 0 {
+		return true
+	}
+	if ev.Payload == nil {
+		return false
+	}
+	p := ev.Payload
+	for _, k := range keys {
+		switch k {
+		case "request_params":
+			if len(p.RequestParams) == 0 {
+				return false
+			}
+		case "request_headers":
+			if len(p.RequestHeaders) == 0 {
+				return false
+			}
+		case "response_result":
+			if len(p.ResponseResult) == 0 {
+				return false
+			}
+		case "response_error":
+			if len(p.ResponseError) == 0 {
+				return false
+			}
+		case "notifications":
+			if len(p.Notifications) == 0 {
+				return false
+			}
+		case "replayed_from":
+			if p.ReplayedFrom == "" {
+				return false
+			}
+		default:
+			return false
+		}
 	}
 	return true
 }

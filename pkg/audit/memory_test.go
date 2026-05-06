@@ -69,6 +69,114 @@ func TestMemoryLogger_QueryFilters(t *testing.T) {
 	}
 }
 
+func TestMemoryLogger_JSONFiltersAndHasKeys(t *testing.T) {
+	m := NewMemoryLogger()
+	now := time.Now().UTC()
+	_ = m.Log(context.Background(), Event{
+		ID: "1", ToolName: "echo", Timestamp: now, Success: true,
+		Payload: &Payload{
+			RequestParams:  map[string]any{"message": "hello", "user": map[string]any{"id": "alice"}},
+			ResponseResult: map[string]any{"isError": false},
+			RequestHeaders: map[string][]string{"User-Agent": {"curl/8.0"}},
+		},
+	})
+	_ = m.Log(context.Background(), Event{
+		ID: "2", ToolName: "echo", Timestamp: now.Add(time.Second), Success: false,
+		Payload: &Payload{
+			RequestParams:  map[string]any{"message": "world", "user": map[string]any{"id": "bob"}},
+			ResponseResult: map[string]any{"isError": true},
+			ResponseError:  map[string]any{"category": "tool", "message": "boom"},
+		},
+	})
+
+	cases := []struct {
+		name   string
+		filter QueryFilter
+		ids    []string // expected event IDs (Query order: ts DESC)
+	}{
+		{
+			"param.user.id=alice",
+			QueryFilter{JSONFilters: []JSONPathFilter{{Source: "param", Path: []string{"user", "id"}, Value: "alice"}}},
+			[]string{"1"},
+		},
+		{
+			"response.isError=true (bool)",
+			QueryFilter{JSONFilters: []JSONPathFilter{{Source: "response", Path: []string{"isError"}, Value: "true"}}},
+			[]string{"2"},
+		},
+		{
+			"header.User-Agent=curl/8.0",
+			QueryFilter{JSONFilters: []JSONPathFilter{{Source: "header", Path: []string{"User-Agent"}, Value: "curl/8.0"}}},
+			[]string{"1"},
+		},
+		{
+			"has=response_error",
+			QueryFilter{HasKeys: []string{"response_error"}},
+			[]string{"2"},
+		},
+		{
+			"AND: param.user.id=alice AND has=request_headers",
+			QueryFilter{
+				JSONFilters: []JSONPathFilter{{Source: "param", Path: []string{"user", "id"}, Value: "alice"}},
+				HasKeys:     []string{"request_headers"},
+			},
+			[]string{"1"},
+		},
+	}
+	for _, c := range cases {
+		evs, err := m.Query(context.Background(), c.filter)
+		if err != nil {
+			t.Errorf("%s: %v", c.name, err)
+			continue
+		}
+		var got []string
+		for _, ev := range evs {
+			got = append(got, ev.ID)
+		}
+		if !equalStringSlice(got, c.ids) {
+			t.Errorf("%s: ids = %v, want %v", c.name, got, c.ids)
+		}
+	}
+}
+
+func TestMemoryLogger_Stream(t *testing.T) {
+	m := NewMemoryLogger()
+	now := time.Now().UTC()
+	for i := 0; i < 5; i++ {
+		_ = m.Log(context.Background(), Event{
+			ID:        string(rune('a' + i)),
+			ToolName:  "echo",
+			Timestamp: now.Add(time.Duration(i) * time.Second),
+			Success:   true,
+			Transport: "http",
+			Source:    "mcp",
+		})
+	}
+	var seen []string
+	if err := m.Stream(context.Background(), QueryFilter{}, func(ev Event) error {
+		seen = append(seen, ev.ID)
+		return nil
+	}); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	// Stream returns Query order (DESC by ts), so newest first.
+	if len(seen) != 5 || seen[0] != "e" || seen[4] != "a" {
+		t.Errorf("seen = %v, want [e d c b a]", seen)
+	}
+}
+
+func equalStringSlice(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func TestMemoryLogger_TimeSeries(t *testing.T) {
 	m := NewMemoryLogger()
 	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)

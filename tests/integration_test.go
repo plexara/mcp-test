@@ -80,19 +80,30 @@ func TestIntegration_WhoamiOverHTTP(t *testing.T) {
 		t.Errorf("auth_type = %v, want apikey", sc["auth_type"])
 	}
 
-	// Audit assertions: pull the events back from Postgres.
+	// Audit assertions: pull the events back from Postgres. The audit
+	// pipeline is async-buffered (AsyncLogger), so the row may not be
+	// visible the instant CallTool returns. Poll briefly.
 	pool, err := pgxpool.New(ctx, pgURL)
 	if err != nil {
 		t.Fatalf("pgx pool: %v", err)
 	}
 	t.Cleanup(pool.Close)
 	store := auditpg.New(pool)
-	events, err := store.Query(ctx, audit.QueryFilter{Limit: 10})
-	if err != nil {
-		t.Fatalf("audit query: %v", err)
+
+	var events []audit.Event
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		events, err = store.Query(ctx, audit.QueryFilter{Limit: 10})
+		if err != nil {
+			t.Fatalf("audit query: %v", err)
+		}
+		if len(events) >= 1 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 	if len(events) != 1 {
-		t.Fatalf("audit events = %d, want 1", len(events))
+		t.Fatalf("audit events = %d, want 1 (after 2s poll)", len(events))
 	}
 	if events[0].ToolName != "whoami" {
 		t.Errorf("audit tool name = %q, want whoami", events[0].ToolName)

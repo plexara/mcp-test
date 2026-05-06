@@ -25,6 +25,17 @@ type PayloadLogger interface {
 	GetPayload(ctx context.Context, eventID string) (*Payload, error)
 }
 
+// StreamingLogger is the optional capability for cursor-style iteration
+// over a filtered event set. The NDJSON export endpoint type-asserts
+// for it so we don't load the entire result set into memory.
+//
+// fn is called once per event; returning a non-nil error stops the
+// iteration and bubbles back to Stream's caller. Loggers that don't
+// implement this interface fall back to Query() with a hard cap.
+type StreamingLogger interface {
+	Stream(ctx context.Context, f QueryFilter, fn func(Event) error) error
+}
+
 // TimePoint is one bucket of an audit time series.
 type TimePoint struct {
 	Time     time.Time `json:"time"`
@@ -52,7 +63,13 @@ type Stats struct {
 	UniqueTools    int64   `json:"unique_tools"`
 }
 
-// QueryFilter narrows audit_events results.
+// QueryFilter narrows audit_events results. Filters are AND-combined.
+//
+// JSONFilters and HasKeys reach into the audit_payloads sibling row.
+// The Postgres store compiles them to JSONB containment / column-not-null
+// predicates against audit_payloads via EXISTS subqueries; the
+// MemoryLogger evaluates them in Go against Event.Payload. Loggers that
+// don't carry payloads (NoopLogger) ignore them.
 type QueryFilter struct {
 	From      time.Time
 	To        time.Time
@@ -65,4 +82,45 @@ type QueryFilter struct {
 	Limit     int
 	Offset    int
 	OrderDesc bool
+
+	// JSONFilters narrow by JSONB content of audit_payloads.
+	// Each filter checks that the value at Path inside Source equals
+	// Value (with light type detection on Value, see ParseJSONValue).
+	JSONFilters []JSONPathFilter
+
+	// HasKeys narrows to events whose audit_payloads row has the named
+	// payload column populated (NOT NULL). Allowed keys come from
+	// AllowedHasKeys; anything else is rejected at parse time.
+	HasKeys []string
 }
+
+// JSONPathFilter narrows by a value inside an audit_payloads JSONB column.
+//
+// Source picks the column: "param" -> request_params, "response" ->
+// response_result, "header" -> request_headers. Path is the dotted
+// path inside that column ("user.id"); Value is the URL string,
+// type-detected at compile time so ?response.isError=true matches the
+// JSON literal true rather than the string "true".
+type JSONPathFilter struct {
+	Source string
+	Path   []string
+	Value  string
+}
+
+// AllowedHasKeys is the closed set of payload-column names accepted by
+// the ?has=<key> query parameter. Restricted to columns the audit
+// middleware actually populates today; new columns must be added here
+// before they're queryable. Strings (not constants) so the HTTP layer
+// can validate user input directly.
+var AllowedHasKeys = []string{
+	"request_params",
+	"request_headers",
+	"response_result",
+	"response_error",
+	"notifications",
+	"replayed_from",
+}
+
+// AllowedJSONSources is the closed set of {Source} values JSONPathFilter
+// accepts; any other value is rejected at parse time.
+var AllowedJSONSources = []string{"param", "response", "header"}

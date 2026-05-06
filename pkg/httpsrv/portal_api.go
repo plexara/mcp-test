@@ -2,6 +2,7 @@ package httpsrv
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -39,6 +40,7 @@ func (p *PortalAPI) Mount(mux *http.ServeMux, mw func(http.Handler) http.Handler
 	mux.Handle("GET /api/v1/portal/tools/{name}", mw(http.HandlerFunc(p.toolDetail)))
 	mux.Handle("GET /api/v1/portal/audit/events", mw(http.HandlerFunc(p.auditEvents)))
 	mux.Handle("GET /api/v1/portal/audit/events/{id}", mw(http.HandlerFunc(p.auditEventDetail)))
+	mux.Handle("GET /api/v1/portal/audit/export", mw(http.HandlerFunc(p.auditExport)))
 	mux.Handle("GET /api/v1/portal/audit/timeseries", mw(http.HandlerFunc(p.auditTimeseries)))
 	mux.Handle("GET /api/v1/portal/audit/breakdown", mw(http.HandlerFunc(p.auditBreakdown)))
 	mux.Handle("GET /api/v1/portal/dashboard", mw(http.HandlerFunc(p.dashboard)))
@@ -147,6 +149,41 @@ func parseQueryFilter(r *http.Request) audit.QueryFilter {
 	if v, _ := strconv.Atoi(q.Get("offset")); v > 0 {
 		f.Offset = v
 	}
+
+	// JSONB path filters and has= shortcuts. Anything malformed
+	// (unknown source, empty path, unknown has key) is silently dropped
+	// rather than failing the whole query, matching how unknown plain
+	// query params are handled above.
+	for k, vs := range q {
+		switch {
+		case strings.HasPrefix(k, "param."), strings.HasPrefix(k, "response."), strings.HasPrefix(k, "header."):
+			source, rest, ok := strings.Cut(k, ".")
+			if !ok || rest == "" || !audit.IsAllowedJSONSource(source) {
+				continue
+			}
+			path := audit.SplitJSONPath(rest)
+			if len(path) == 0 {
+				continue
+			}
+			for _, v := range vs {
+				if v == "" {
+					continue
+				}
+				f.JSONFilters = append(f.JSONFilters, audit.JSONPathFilter{
+					Source: source,
+					Path:   path,
+					Value:  v,
+				})
+			}
+		case k == "has":
+			for _, v := range vs {
+				if audit.IsAllowedHasKey(v) {
+					f.HasKeys = append(f.HasKeys, v)
+				}
+			}
+		}
+	}
+
 	return f
 }
 
@@ -230,6 +267,90 @@ func (p *PortalAPI) auditEventDetail(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, ev)
 }
+
+// maxExportEvents caps the export endpoint at a fixed event count
+// regardless of operator filters, so a misconfigured export can't
+// hold the database open or run an httptest pool out of memory.
+// Operators wanting more should narrow the filter or page through
+// /audit/events directly.
+const maxExportEvents = 100_000
+
+// auditExport streams a filtered slice of events as newline-delimited
+// JSON (jsonl). Filters mirror /audit/events; the only required
+// parameter is format=jsonl (other formats reserved for future).
+//
+// The summary row (no payload) is what's emitted, matching what
+// /events returns. Operators who need the payload should fetch
+// individual events via /audit/events/{id} after filtering.
+func (p *PortalAPI) auditExport(w http.ResponseWriter, r *http.Request) {
+	if got := r.URL.Query().Get("format"); got != "" && got != "jsonl" {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("unsupported format %q (only jsonl is supported)", got))
+		return
+	}
+	f := parseQueryFilter(r)
+	// Limit/Offset apply differently here: Limit caps the export, but
+	// the underlying paginated stream uses its own page size. Map the
+	// caller's Limit (if any) onto a hard ceiling, and clear Offset so
+	// streams always start from the head of the matching set.
+	exportCap := f.Limit
+	if exportCap <= 0 || exportCap > maxExportEvents {
+		exportCap = maxExportEvents
+	}
+	f.Limit = 0
+	f.Offset = 0
+
+	sl, ok := p.audit.(audit.StreamingLogger)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("export not supported by configured audit backend"))
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	// Suggest a filename for browser-driven downloads; consumers
+	// piping with curl/jq ignore Content-Disposition.
+	w.Header().Set("Content-Disposition", `attachment; filename="audit.jsonl"`)
+	w.WriteHeader(http.StatusOK)
+
+	enc := json.NewEncoder(w)
+	written := 0
+	flusher, _ := w.(http.Flusher)
+	err := sl.Stream(r.Context(), f, func(ev audit.Event) error {
+		if written >= exportCap {
+			// Bail by returning a sentinel; the closure can't write a
+			// trailer mid-stream once headers are out, so just stop.
+			return errExportCapped
+		}
+		// Payload is summary-only on this endpoint; clear any in-memory
+		// pointer set by the underlying logger before encoding.
+		ev.Payload = nil
+		if err := enc.Encode(&ev); err != nil {
+			return err
+		}
+		written++
+		// Flush every 100 lines so a slow consumer sees data promptly
+		// and a long-running export shows progress.
+		if flusher != nil && written%100 == 0 {
+			flusher.Flush()
+		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, errExportCapped) {
+		// Headers are already out, so we can only log + truncate the
+		// stream. The client will see a partial response.
+		slog.Warn("audit: export stream failed mid-flight",
+			"err", err,
+			"written", written,
+		)
+	}
+	if flusher != nil {
+		flusher.Flush()
+	}
+}
+
+// errExportCapped is the sentinel a Stream callback returns to signal
+// the export hit maxExportEvents (or the operator-supplied cap) and
+// should stop without surfacing as a real error.
+var errExportCapped = errors.New("export cap reached")
 
 // maxTimeseriesWindow caps the requested time-series window at 30 days
 // regardless of bucket size, to bound query cost on the audit table.

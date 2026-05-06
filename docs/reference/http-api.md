@@ -49,11 +49,30 @@ Behind the cookie or `X-API-Key` / `Authorization: Bearer`.
 | `GET` | `/api/v1/portal/instructions` | The `server.instructions` text the MCP server hands to clients at initialize time. |
 | `GET` | `/api/v1/portal/tools` | List of `{name, group, description, input_schema}` for every registered tool. |
 | `GET` | `/api/v1/portal/tools/{name}` | Same shape, single tool. |
-| `GET` | `/api/v1/portal/audit/events` | Paginated audit events. Query: `from`, `to` (RFC 3339), `tool`, `user`, `session`, `success`, `q`, `limit`, `offset`. |
+| `GET` | `/api/v1/portal/audit/events` | Paginated audit events. Query: `from`, `to` (RFC 3339), `tool`, `user`, `session`, `success`, `q`, `limit`, `offset`, plus the JSONB filters described below. |
+| `GET` | `/api/v1/portal/audit/events/{id}` | Single event by id (UUID); includes the captured payload row when present. 400 on a non-UUID id, 404 when the event isn't recorded. |
+| `GET` | `/api/v1/portal/audit/export` | NDJSON stream of summary rows for a filter. `format=jsonl` (default) is the only supported format. Same filter surface as `/events`. Capped at 100,000 rows per request. |
 | `GET` | `/api/v1/portal/audit/timeseries` | Bucketed counts. Query: `from`, `to`, `bucket` (Go duration). |
 | `GET` | `/api/v1/portal/audit/breakdown` | Group-by aggregations. Query: `by` (`tool`/`user`/`success`/`auth_type`). |
 | `GET` | `/api/v1/portal/dashboard` | 1-hour stats + recent activity. |
 | `GET` | `/api/v1/portal/wellknown` | Pretty rendering of the protected-resource metadata. |
+
+### JSONB path filters
+
+`/audit/events` and `/audit/export` accept additional query parameters that compile to JSONB containment predicates against the `audit_payloads` sibling row. Filters are AND-combined with each other and with the indexed-column filters above.
+
+| Syntax | Compiles to | Example |
+| --- | --- | --- |
+| `param.<dotted.path>=<value>` | `audit_payloads.request_params @> {"<path>": <value>}` | `?param.user.id=alice` |
+| `response.<dotted.path>=<value>` | `audit_payloads.response_result @> {"<path>": <value>}` | `?response.isError=true` |
+| `header.<name>=<value>` | `audit_payloads.request_headers @> {"<name>": ["<value>"]}` | `?header.User-Agent=curl/8.0` |
+| `has=<column>` | `audit_payloads.<column> IS NOT NULL` | `?has=response_error` |
+
+Allowed `has=` columns: `request_params`, `request_headers`, `response_result`, `response_error`, `notifications`, `replayed_from`. Anything else is silently dropped.
+
+**Value type detection.** Bare values are type-detected before the containment doc is built: `true` / `false` become JSON booleans, integers and floats become numbers, everything else is a string. Force a literal string with quotes: `?param.code="200"` matches the JSON string `"200"`, while `?param.code=200` matches the JSON number `200`. The same rule applies to `response.*` and `header.*`.
+
+**Index use.** The `request_params` and `response_result` columns carry `jsonb_path_ops` GIN indexes; the `@>` operator hits them directly. `request_headers` is unindexed today, so `header.*` filters scan the matching subset and are best paired with a time-range filter. The `has=` filter is a NOT-NULL check on a stored boolean / nullable column, no index needed.
 
 ## Admin API (mutating)
 

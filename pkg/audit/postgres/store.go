@@ -279,6 +279,53 @@ func (s *Store) Query(ctx context.Context, f audit.QueryFilter) ([]audit.Event, 
 	return out, rows.Err()
 }
 
+// Stream iterates the filtered event set via the same SELECT used by
+// Query, calling fn once per row. This avoids buffering the full set
+// in memory for export endpoints; pgx itself uses a network-level
+// cursor under the hood.
+//
+// Stream forces f.Limit to the largest value buildSelect accepts (1000)
+// and walks pages with f.Offset until the underlying query returns no
+// rows. That keeps each round trip bounded while still allowing
+// arbitrarily large filtered exports.
+func (s *Store) Stream(ctx context.Context, f audit.QueryFilter, fn func(audit.Event) error) error {
+	const pageSize = 1000
+	page := f
+	page.Limit = pageSize
+	if page.Offset < 0 {
+		page.Offset = 0
+	}
+	for {
+		q, args := buildSelect(page, false)
+		rows, err := s.pool.Query(ctx, q, args...)
+		if err != nil {
+			return err
+		}
+		count := 0
+		for rows.Next() {
+			ev, err := scanEvent(rows)
+			if err != nil {
+				rows.Close()
+				return err
+			}
+			if err := fn(ev); err != nil {
+				rows.Close()
+				return err
+			}
+			count++
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+		if count < pageSize {
+			return nil
+		}
+		page.Offset += pageSize
+	}
+}
+
 // Count returns the number of matching events without paging.
 func (s *Store) Count(ctx context.Context, f audit.QueryFilter) (int64, error) {
 	q, args := buildSelect(f, true)
@@ -438,6 +485,21 @@ func breakdownColumn(dim string) string {
 	return ""
 }
 
+// jsonFilterColumn maps a QueryFilter.JSONPathFilter Source into the
+// audit_payloads JSONB column name. Unknown sources return "" and are
+// skipped at the call site.
+func jsonFilterColumn(source string) string {
+	switch source {
+	case "param":
+		return "request_params"
+	case "response":
+		return "response_result"
+	case "header":
+		return "request_headers"
+	}
+	return ""
+}
+
 func buildSelect(f audit.QueryFilter, count bool) (string, []any) {
 	var (
 		conds []string
@@ -481,6 +543,55 @@ func buildSelect(f audit.QueryFilter, count bool) (string, []any) {
 		like := "%" + escapeLike(f.Search) + "%"
 		args = append(args, like, like, like)
 		i += 3
+	}
+
+	// JSON path filters: each compiles to an EXISTS subquery against
+	// audit_payloads.<column> @> $N::jsonb. The containment doc is built
+	// from the dotted path so a single ?param.user.id=alice produces
+	// {"user":{"id":"alice"}}, which the GIN(jsonb_path_ops) index can
+	// answer cheaply. Source has already been validated against the
+	// closed AllowedJSONSources set at the HTTP layer.
+	for _, jf := range f.JSONFilters {
+		col := jsonFilterColumn(jf.Source)
+		if col == "" {
+			continue
+		}
+		var doc any
+		if jf.Source == "header" {
+			// Headers are stored as {"User-Agent":["curl/8.0"]} so the
+			// containment doc must be wrapped in an array at the leaf.
+			if len(jf.Path) == 0 {
+				continue
+			}
+			doc = map[string]any{
+				jf.Path[0]: []any{audit.ParseJSONFilterValue(jf.Value)},
+			}
+		} else {
+			doc = audit.JSONFilterToContainment(jf.Path, audit.ParseJSONFilterValue(jf.Value))
+		}
+		b, err := json.Marshal(doc)
+		if err != nil {
+			continue
+		}
+		conds = append(conds, fmt.Sprintf(
+			"EXISTS (SELECT 1 FROM audit_payloads p WHERE p.event_id = audit_events.id AND p.%s @> $%d::jsonb)",
+			col, i,
+		))
+		args = append(args, string(b))
+		i++
+	}
+
+	// has= filters: shorthand for "this payload column is populated".
+	// Validated against AllowedHasKeys at the HTTP layer; safe to splice
+	// the column name verbatim into SQL since it's not user input.
+	for _, k := range f.HasKeys {
+		if !audit.IsAllowedHasKey(k) {
+			continue
+		}
+		conds = append(conds, fmt.Sprintf(
+			"EXISTS (SELECT 1 FROM audit_payloads p WHERE p.event_id = audit_events.id AND p.%s IS NOT NULL)",
+			k,
+		))
 	}
 
 	where := ""
