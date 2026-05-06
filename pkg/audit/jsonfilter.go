@@ -108,9 +108,22 @@ func numericEq(a float64, b any) bool {
 	switch bv := b.(type) {
 	case float64:
 		return a == bv
+	case float32:
+		return a == float64(bv)
 	case int64:
 		return a == float64(bv)
+	case int32:
+		return a == float64(bv)
 	case int:
+		return a == float64(bv)
+	case uint:
+		return a == float64(bv)
+	case uint32:
+		return a == float64(bv)
+	case uint64:
+		// Lossy at very large values; for filter-equality this is the
+		// best we can do without bigint, and audit numbers are nowhere
+		// near 2^53.
 		return a == float64(bv)
 	case json.Number:
 		bf, _ := bv.Float64()

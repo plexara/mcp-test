@@ -119,6 +119,21 @@ func (p *PortalAPI) toolDetail(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
 }
 
+// validPath reports whether path is non-empty and has no empty segments.
+// "?param.a..b=v" parses to ["a","","b"] which can't match any real
+// payload; rather than silently building a doomed filter, drop it.
+func validPath(path []string) bool {
+	if len(path) == 0 {
+		return false
+	}
+	for _, seg := range path {
+		if seg == "" {
+			return false
+		}
+	}
+	return true
+}
+
 func parseQueryFilter(r *http.Request) audit.QueryFilter {
 	q := r.URL.Query()
 	f := audit.QueryFilter{}
@@ -151,9 +166,9 @@ func parseQueryFilter(r *http.Request) audit.QueryFilter {
 	}
 
 	// JSONB path filters and has= shortcuts. Anything malformed
-	// (unknown source, empty path, unknown has key) is silently dropped
-	// rather than failing the whole query, matching how unknown plain
-	// query params are handled above.
+	// (unknown source, empty path segment, unknown has key) is silently
+	// dropped rather than failing the whole query, matching how unknown
+	// plain query params are handled above.
 	for k, vs := range q {
 		switch {
 		case strings.HasPrefix(k, "param."), strings.HasPrefix(k, "response."), strings.HasPrefix(k, "header."):
@@ -162,8 +177,15 @@ func parseQueryFilter(r *http.Request) audit.QueryFilter {
 				continue
 			}
 			path := audit.SplitJSONPath(rest)
-			if len(path) == 0 {
+			if !validPath(path) {
 				continue
+			}
+			// Headers are stored under the canonical Go form
+			// (User-Agent, X-Api-Key, etc.). Operators commonly write
+			// them in lower-case in URLs and config; canonicalize so
+			// ?header.user-agent matches ?header.User-Agent.
+			if source == "header" {
+				path[0] = http.CanonicalHeaderKey(path[0])
 			}
 			for _, v := range vs {
 				if v == "" {
@@ -312,6 +334,11 @@ func (p *PortalAPI) auditExport(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 
 	enc := json.NewEncoder(w)
+	// NDJSON consumers want bytes-as-written; default HTML escaping turns
+	// "<" into "<" inside captured tool output, which surprises
+	// operators eyeballing the file. Tools downstream parse either form
+	// fine, but readability matters here.
+	enc.SetEscapeHTML(false)
 	written := 0
 	flusher, _ := w.(http.Flusher)
 	err := sl.Stream(r.Context(), f, func(ev audit.Event) error {

@@ -1,6 +1,7 @@
 package audit
 
 import (
+	"encoding/json"
 	"reflect"
 	"testing"
 )
@@ -95,6 +96,36 @@ func TestMatchJSONPath_NonMapTraversal(t *testing.T) {
 	doc := map[string]any{"a": "scalar"}
 	if MatchJSONPath(doc, []string{"a", "b"}, "scalar") {
 		t.Error("expected false: cannot descend past scalar")
+	}
+}
+
+func TestNumericEq_TypeSurface(t *testing.T) {
+	// numericEq compares the float64 left side against arbitrary right
+	// types. Cover each case so a future signature change can't drop a
+	// type silently.
+	cases := []struct {
+		name string
+		a    float64
+		b    any
+		want bool
+	}{
+		{"float64 eq", 3, float64(3), true},
+		{"float64 ne", 3, float64(4), false},
+		{"float32", 3, float32(3), true},
+		{"int64", 3, int64(3), true},
+		{"int32", 3, int32(3), true},
+		{"int", 3, 3, true},
+		{"uint", 3, uint(3), true},
+		{"uint32", 3, uint32(3), true},
+		{"uint64", 3, uint64(3), true},
+		{"json.Number", 3.5, json.Number("3.5"), true},
+		{"unsupported type", 3, "3", false},
+	}
+	for _, c := range cases {
+		got := numericEq(c.a, c.b)
+		if got != c.want {
+			t.Errorf("%s: numericEq(%v, %v) = %v, want %v", c.name, c.a, c.b, got, c.want)
+		}
 	}
 }
 

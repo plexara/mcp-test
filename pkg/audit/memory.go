@@ -67,13 +67,16 @@ func (m *MemoryLogger) Count(ctx context.Context, f QueryFilter) (int64, error) 
 // result set into memory; for the in-memory logger the savings are
 // theoretical, but the contract matches the Postgres store's cursor.
 func (m *MemoryLogger) Stream(ctx context.Context, f QueryFilter, fn func(Event) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	evs, err := m.Query(ctx, f)
 	if err != nil {
 		return err
 	}
 	for _, ev := range evs {
-		if ctx.Err() != nil {
-			return ctx.Err()
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 		if err := fn(ev); err != nil {
 			return err
@@ -289,10 +292,11 @@ func matchesJSONFilters(ev Event, fs []JSONPathFilter) bool {
 		case "response":
 			src = ev.Payload.ResponseResult
 		case "header":
-			// Headers are map[string][]string in Go but stored as JSONB
-			// objects on disk (Postgres serializes them as arrays of
-			// strings). For MemoryLogger we adapt: a path like "User-Agent"
-			// matches the first header value.
+			// Headers are map[string][]string in Go and serialize to
+			// JSONB as {"Name": ["value", ...]}. Postgres-side @>
+			// containment matches when the array contains the wanted
+			// value; mirror that here by accepting a hit on any of the
+			// stored values for the named header.
 			if ev.Payload.RequestHeaders == nil {
 				return false
 			}
@@ -303,10 +307,12 @@ func matchesJSONFilters(ev Event, fs []JSONPathFilter) bool {
 			if !ok || len(values) == 0 {
 				return false
 			}
-			want := ParseJSONFilterValue(jf.Value)
+			// Header values are always strings on the wire; compare the
+			// raw filter value as a string rather than running it through
+			// ParseJSONFilterValue. Mirrors what the Postgres compiler does.
 			matched := false
 			for _, v := range values {
-				if jsonEqual(v, want) {
+				if v == jf.Value {
 					matched = true
 					break
 				}

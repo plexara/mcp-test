@@ -284,18 +284,28 @@ func (s *Store) Query(ctx context.Context, f audit.QueryFilter) ([]audit.Event, 
 // in memory for export endpoints; pgx itself uses a network-level
 // cursor under the hood.
 //
-// Stream forces f.Limit to the largest value buildSelect accepts (1000)
-// and walks pages with f.Offset until the underlying query returns no
-// rows. That keeps each round trip bounded while still allowing
-// arbitrarily large filtered exports.
+// Stream uses MaxQueryLimit as the page size and walks pages with
+// f.Offset until a page returns fewer rows. Sharing one constant with
+// buildSelect avoids a silent reset to the much smaller default if
+// either side moves.
+//
+// Concurrent-insert caveat: ORDER BY ts DESC + OFFSET pagination is
+// unstable when new rows arrive at the head between pages, since each
+// new row shifts every later row down by one offset slot. Under heavy
+// concurrent writes during a long export, a row at the page boundary
+// can appear in two consecutive pages. Consumers that care should
+// dedupe by Event.ID; a future revision can switch to a ts cursor
+// (WHERE ts < $cursor) for a true snapshot guarantee.
 func (s *Store) Stream(ctx context.Context, f audit.QueryFilter, fn func(audit.Event) error) error {
-	const pageSize = 1000
 	page := f
-	page.Limit = pageSize
+	page.Limit = MaxQueryLimit
 	if page.Offset < 0 {
 		page.Offset = 0
 	}
 	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		q, args := buildSelect(page, false)
 		rows, err := s.pool.Query(ctx, q, args...)
 		if err != nil {
@@ -319,10 +329,10 @@ func (s *Store) Stream(ctx context.Context, f audit.QueryFilter, fn func(audit.E
 			return err
 		}
 		rows.Close()
-		if count < pageSize {
+		if count < MaxQueryLimit {
 			return nil
 		}
-		page.Offset += pageSize
+		page.Offset += MaxQueryLimit
 	}
 }
 
@@ -485,6 +495,13 @@ func breakdownColumn(dim string) string {
 	return ""
 }
 
+// MaxQueryLimit is the largest LIMIT buildSelect will honor. Shared
+// with Stream so the two stay in sync; a value bigger than this gets
+// silently reset by buildSelect, which would otherwise make Stream
+// take 10x more roundtrips. Keep them coupled by always referencing
+// this constant.
+const MaxQueryLimit = 1000
+
 // jsonFilterColumn maps a QueryFilter.JSONPathFilter Source into the
 // audit_payloads JSONB column name. Unknown sources return "" and are
 // skipped at the call site.
@@ -558,13 +575,16 @@ func buildSelect(f audit.QueryFilter, count bool) (string, []any) {
 		}
 		var doc any
 		if jf.Source == "header" {
-			// Headers are stored as {"User-Agent":["curl/8.0"]} so the
-			// containment doc must be wrapped in an array at the leaf.
+			// Headers are stored as {"User-Agent":["curl/8.0"]}: the
+			// containment doc wraps the value in an array at the leaf.
+			// Header values are always strings on the wire; force the
+			// raw value rather than running it through ParseJSONFilterValue
+			// so ?header.X-Count=42 matches a stored "42" not JSON 42.
 			if len(jf.Path) == 0 {
 				continue
 			}
 			doc = map[string]any{
-				jf.Path[0]: []any{audit.ParseJSONFilterValue(jf.Value)},
+				jf.Path[0]: []any{jf.Value},
 			}
 		} else {
 			doc = audit.JSONFilterToContainment(jf.Path, audit.ParseJSONFilterValue(jf.Value))
@@ -604,7 +624,7 @@ func buildSelect(f audit.QueryFilter, count bool) (string, []any) {
 	}
 
 	limit := f.Limit
-	if limit <= 0 || limit > 1000 {
+	if limit <= 0 || limit > MaxQueryLimit {
 		limit = 100
 	}
 	args = append(args, limit, f.Offset)

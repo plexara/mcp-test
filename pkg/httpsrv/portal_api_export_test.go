@@ -130,3 +130,145 @@ func TestParseQueryFilter_RejectsUnknownSourceAndKey(t *testing.T) {
 		t.Errorf("unknown has key should be rejected, got: %v", f.HasKeys)
 	}
 }
+
+func TestParseQueryFilter_DropsEmptyPathSegments(t *testing.T) {
+	// "?param.a..b=v" parses to path ["a","","b"]: an empty segment
+	// can't match any real payload, so the whole filter is dropped.
+	r := httptest.NewRequest(http.MethodGet,
+		"/api/v1/portal/audit/events?param.a..b=v&param..leading=v&param.trailing.=v",
+		nil)
+	f := parseQueryFilter(r)
+	if len(f.JSONFilters) != 0 {
+		t.Errorf("empty-segment paths should be dropped, got: %+v", f.JSONFilters)
+	}
+}
+
+func TestParseQueryFilter_CanonicalizesHeaderName(t *testing.T) {
+	// Operators routinely write headers in lower-case in URLs. The
+	// stored JSONB carries the canonical Go form (User-Agent), so the
+	// parser must canonicalize before matching.
+	r := httptest.NewRequest(http.MethodGet,
+		"/api/v1/portal/audit/events?header.user-agent=curl/8.0&header.x-api-key=k",
+		nil)
+	f := parseQueryFilter(r)
+	if len(f.JSONFilters) != 2 {
+		t.Fatalf("len = %d, want 2: %+v", len(f.JSONFilters), f.JSONFilters)
+	}
+	got := map[string]string{}
+	for _, jf := range f.JSONFilters {
+		got[jf.Path[0]] = jf.Value
+	}
+	if got["User-Agent"] != "curl/8.0" {
+		t.Errorf("User-Agent canonicalization failed: %+v", got)
+	}
+	if got["X-Api-Key"] != "k" {
+		t.Errorf("X-Api-Key canonicalization failed: %+v", got)
+	}
+}
+
+func TestPortalAPI_AuditEvents_AppliesJSONFilters(t *testing.T) {
+	// /audit/events runs the same parseQueryFilter -> Logger.Query
+	// path; locks the wiring so a refactor that drops f.JSONFilters
+	// or f.HasKeys before forwarding to the logger surfaces here.
+	mem := audit.NewMemoryLogger()
+	now := time.Now().UTC()
+	_ = mem.Log(context.Background(), audit.Event{
+		ID: "alice", ToolName: "echo", Timestamp: now, Success: true,
+		Transport: "http", Source: "mcp",
+		Payload: &audit.Payload{
+			RequestParams:  map[string]any{"user": map[string]any{"id": "alice"}},
+			RequestHeaders: map[string][]string{"User-Agent": {"curl/8.0"}},
+		},
+	})
+	_ = mem.Log(context.Background(), audit.Event{
+		ID: "bob", ToolName: "echo", Timestamp: now.Add(time.Second), Success: false,
+		Transport: "http", Source: "mcp",
+		Payload: &audit.Payload{
+			RequestParams: map[string]any{"user": map[string]any{"id": "bob"}},
+			ResponseError: map[string]any{"category": "tool"},
+		},
+	})
+
+	cases := []struct {
+		name string
+		url  string
+		ids  []string
+	}{
+		{"param path filter", "?param.user.id=alice", []string{"alice"}},
+		{"has= filter", "?has=response_error", []string{"bob"}},
+		{"header case-insensitive", "?header.user-agent=curl/8.0", []string{"alice"}},
+	}
+	mux := portalTestMux(t, mem)
+	for _, c := range cases {
+		req := httptest.NewRequest(http.MethodGet,
+			"/api/v1/portal/audit/events"+c.url, nil)
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Errorf("%s: status = %d body=%s", c.name, w.Code, w.Body.String())
+			continue
+		}
+		var resp struct {
+			Events []audit.Event `json:"events"`
+		}
+		_ = json.NewDecoder(w.Body).Decode(&resp)
+		got := make([]string, 0, len(resp.Events))
+		for _, ev := range resp.Events {
+			got = append(got, ev.ID)
+		}
+		if !equalStringSlice(got, c.ids) {
+			t.Errorf("%s: ids = %v, want %v", c.name, got, c.ids)
+		}
+	}
+}
+
+func TestPortalAPI_AuditExport_HonorsLimitCap(t *testing.T) {
+	// Lock the cap path: with N events stored and ?limit=K (K<N),
+	// the export emits exactly K lines. A regression that flips the
+	// >= comparison or skips the early return would show here.
+	mem := audit.NewMemoryLogger()
+	now := time.Now().UTC()
+	const stored = 10
+	for i := 0; i < stored; i++ {
+		_ = mem.Log(context.Background(), audit.Event{
+			ID:        string(rune('a' + i)),
+			ToolName:  "echo",
+			Timestamp: now.Add(time.Duration(i) * time.Second),
+			Success:   true,
+			Transport: "http",
+			Source:    "mcp",
+		})
+	}
+	mux := portalTestMux(t, mem)
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/portal/audit/export?format=jsonl&limit=4", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	var lines int
+	scanner := bufio.NewScanner(w.Body)
+	for scanner.Scan() {
+		if scanner.Text() != "" {
+			lines++
+		}
+	}
+	if lines != 4 {
+		t.Errorf("limit=4 with %d events stored: got %d lines, want 4", stored, lines)
+	}
+}
+
+// equalStringSlice is a small set-or-order-insensitive helper local
+// to this file; tests don't share helpers across files in this package.
+func equalStringSlice(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
