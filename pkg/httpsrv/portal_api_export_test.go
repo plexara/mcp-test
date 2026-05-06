@@ -222,6 +222,51 @@ func TestPortalAPI_AuditEvents_AppliesJSONFilters(t *testing.T) {
 	}
 }
 
+func TestPortalAPI_AuditExport_DoesNotEscapeHTMLChars(t *testing.T) {
+	// SetEscapeHTML(false) on the encoder: tool output containing
+	// <, >, & must hit the wire unescaped so an operator eyeballing
+	// the JSONL file sees the original bytes. Standard json.Encoder
+	// would emit "<" etc., which is technically valid JSON but
+	// surprising in a human-readable export.
+	mem := audit.NewMemoryLogger()
+	_ = mem.Log(context.Background(), audit.Event{
+		ID:           "html-event",
+		ToolName:     "echo",
+		Timestamp:    time.Now().UTC(),
+		Success:      true,
+		Transport:    "http",
+		Source:       "mcp",
+		ErrorMessage: "<script>alert(\"x\")</script> & friends",
+	})
+
+	mux := portalTestMux(t, mem)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/portal/audit/export?format=jsonl", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	body := w.Body.String()
+	// With Go's default encoder, '<' is emitted as the 6-byte unicode
+	// escape "<", '>' as ">", '&' as "&".
+	// SetEscapeHTML(false) lets the raw bytes through. Assert the raw
+	// form, fail on any of the escape forms.
+	escapes := []string{
+		"\\u003c", // <
+		"\\u003e", // >
+		"\\u0026", // &
+	}
+	for _, esc := range escapes {
+		if strings.Contains(body, esc) {
+			t.Errorf("SetEscapeHTML(false) regression: body still has %q escape:\n%s", esc, body)
+		}
+	}
+	if !strings.Contains(body, "<script>") {
+		t.Errorf("expected raw '<script>' in body, got:\n%s", body)
+	}
+}
+
 func TestPortalAPI_AuditExport_HonorsLimitCap(t *testing.T) {
 	// Lock the cap path: with N events stored and ?limit=K (K<N),
 	// the export emits exactly K lines. A regression that flips the

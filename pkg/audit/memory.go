@@ -43,7 +43,15 @@ func (m *MemoryLogger) Query(_ context.Context, f QueryFilter) ([]Event, error) 
 		}
 		out = append(out, ev)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Timestamp.After(out[j].Timestamp) })
+	// ts DESC, id ASC. Mirrors the Postgres store's ordering so the
+	// two backends agree under tied timestamps; without the tiebreaker,
+	// Stream pagination can duplicate or skip rows at page boundaries.
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].Timestamp.Equal(out[j].Timestamp) {
+			return out[i].Timestamp.After(out[j].Timestamp)
+		}
+		return out[i].ID < out[j].ID
+	})
 	if f.Limit > 0 && len(out) > f.Limit {
 		out = out[:f.Limit]
 	}
@@ -66,10 +74,17 @@ func (m *MemoryLogger) Count(ctx context.Context, f QueryFilter) (int64, error) 
 // return them. Used by the NDJSON export to avoid loading the full
 // result set into memory; for the in-memory logger the savings are
 // theoretical, but the contract matches the Postgres store's cursor.
+//
+// Per the StreamingLogger contract, f.Limit is ignored: Stream iterates
+// the whole filtered set, and callers that need a stop-after-N stop by
+// returning a sentinel error from fn. We strip Limit / Offset before
+// delegating to Query so the contract is honored regardless of caller.
 func (m *MemoryLogger) Stream(ctx context.Context, f QueryFilter, fn func(Event) error) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	f.Limit = 0
+	f.Offset = 0
 	evs, err := m.Query(ctx, f)
 	if err != nil {
 		return err

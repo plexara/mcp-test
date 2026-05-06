@@ -284,7 +284,7 @@ func (s *Store) Query(ctx context.Context, f audit.QueryFilter) ([]audit.Event, 
 // in memory for export endpoints; pgx itself uses a network-level
 // cursor under the hood.
 //
-// Stream uses MaxQueryLimit as the page size and walks pages with
+// Stream uses audit.MaxQueryLimit as the page size and walks pages with
 // f.Offset until a page returns fewer rows. Sharing one constant with
 // buildSelect avoids a silent reset to the much smaller default if
 // either side moves.
@@ -297,11 +297,12 @@ func (s *Store) Query(ctx context.Context, f audit.QueryFilter) ([]audit.Event, 
 // dedupe by Event.ID; a future revision can switch to a ts cursor
 // (WHERE ts < $cursor) for a true snapshot guarantee.
 func (s *Store) Stream(ctx context.Context, f audit.QueryFilter, fn func(audit.Event) error) error {
+	// Per the StreamingLogger contract f.Limit and f.Offset are
+	// ignored; Stream iterates the whole filtered set and uses an
+	// internal page cursor (page.Offset) for pagination.
 	page := f
-	page.Limit = MaxQueryLimit
-	if page.Offset < 0 {
-		page.Offset = 0
-	}
+	page.Limit = audit.MaxQueryLimit
+	page.Offset = 0
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -329,10 +330,10 @@ func (s *Store) Stream(ctx context.Context, f audit.QueryFilter, fn func(audit.E
 			return err
 		}
 		rows.Close()
-		if count < MaxQueryLimit {
+		if count < audit.MaxQueryLimit {
 			return nil
 		}
-		page.Offset += MaxQueryLimit
+		page.Offset += audit.MaxQueryLimit
 	}
 }
 
@@ -495,13 +496,6 @@ func breakdownColumn(dim string) string {
 	return ""
 }
 
-// MaxQueryLimit is the largest LIMIT buildSelect will honor. Shared
-// with Stream so the two stay in sync; a value bigger than this gets
-// silently reset by buildSelect, which would otherwise make Stream
-// take 10x more roundtrips. Keep them coupled by always referencing
-// this constant.
-const MaxQueryLimit = 1000
-
 // jsonFilterColumn maps a QueryFilter.JSONPathFilter Source into the
 // audit_payloads JSONB column name. Unknown sources return "" and are
 // skipped at the call site.
@@ -624,7 +618,7 @@ func buildSelect(f audit.QueryFilter, count bool) (string, []any) {
 	}
 
 	limit := f.Limit
-	if limit <= 0 || limit > MaxQueryLimit {
+	if limit <= 0 || limit > audit.MaxQueryLimit {
 		limit = 100
 	}
 	args = append(args, limit, f.Offset)
@@ -637,7 +631,12 @@ func buildSelect(f audit.QueryFilter, count bool) (string, []any) {
 		"request_chars, response_chars, content_blocks, " +
 		"transport, source, COALESCE(remote_addr, ''), COALESCE(user_agent, '') " +
 		"FROM audit_events" + where +
-		" ORDER BY ts DESC" +
+		// id ASC is the tiebreaker for tied timestamps. Without it,
+		// two events with the same ts can swap positions between pages
+		// of a Stream walk, causing both duplicate emission and missed
+		// emission across page boundaries. Tied ts is common under any
+		// sub-millisecond write rate.
+		" ORDER BY ts DESC, id ASC" +
 		fmt.Sprintf(" LIMIT $%d OFFSET $%d", i, i+1), args
 }
 

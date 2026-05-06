@@ -139,6 +139,65 @@ func TestMemoryLogger_JSONFiltersAndHasKeys(t *testing.T) {
 	}
 }
 
+func TestMemoryLogger_Query_TiedTimestampsAreStable(t *testing.T) {
+	// Tied timestamps must produce a deterministic Query order matching
+	// the Postgres backend (ts DESC, id ASC). Without the id tiebreaker
+	// the two backends could diverge under any ts collision and Stream
+	// pagination consumers would see flaky results.
+	m := NewMemoryLogger()
+	tied := time.Now().UTC()
+	for _, id := range []string{"c", "a", "b"} {
+		_ = m.Log(context.Background(), Event{
+			ID:        id,
+			ToolName:  "echo",
+			Timestamp: tied,
+			Success:   true,
+			Transport: "http",
+			Source:    "mcp",
+		})
+	}
+	got, _ := m.Query(context.Background(), QueryFilter{})
+	if len(got) != 3 {
+		t.Fatalf("len = %d", len(got))
+	}
+	want := []string{"a", "b", "c"}
+	for i, ev := range got {
+		if ev.ID != want[i] {
+			t.Errorf("got[%d] = %q, want %q (full: %v)", i, ev.ID,
+				want[i], []string{got[0].ID, got[1].ID, got[2].ID})
+		}
+	}
+}
+
+func TestMemoryLogger_Stream_IgnoresLimit(t *testing.T) {
+	// Per the StreamingLogger contract, f.Limit is ignored: Stream
+	// iterates the whole filtered set so callers can stop via a sentinel
+	// from fn. A regression that forwards Limit to Query would silently
+	// truncate exports.
+	m := NewMemoryLogger()
+	now := time.Now().UTC()
+	for i := 0; i < 5; i++ {
+		_ = m.Log(context.Background(), Event{
+			ID:        string(rune('a' + i)),
+			Timestamp: now.Add(time.Duration(i) * time.Second),
+			ToolName:  "echo",
+			Success:   true,
+			Transport: "http",
+			Source:    "mcp",
+		})
+	}
+	count := 0
+	if err := m.Stream(context.Background(), QueryFilter{Limit: 2}, func(Event) error {
+		count++
+		return nil
+	}); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	if count != 5 {
+		t.Errorf("count = %d, want 5 (Limit must be ignored)", count)
+	}
+}
+
 func TestMemoryLogger_Stream(t *testing.T) {
 	m := NewMemoryLogger()
 	now := time.Now().UTC()

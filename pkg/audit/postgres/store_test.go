@@ -285,6 +285,57 @@ func TestStore_JSONFilters_AndHasKeys(t *testing.T) {
 	}
 }
 
+func TestStore_Stream_TiedTimestampsNoDuplicatesOrSkips(t *testing.T) {
+	// Tied timestamps + OFFSET pagination is the worst case: without an
+	// id tiebreaker on ORDER BY, the same row can appear in two
+	// consecutive pages and a different row can be skipped entirely.
+	// Write 1100 events all sharing one ts, then assert Stream visits
+	// each id exactly once.
+	ctx := context.Background()
+	url := startPostgres(ctx, t)
+	if err := migrate.Up(url); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	pool, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatalf("pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	store := auditpg.New(pool)
+
+	const n = 1100
+	tied := time.Now().UTC().Truncate(time.Second)
+	for i := 0; i < n; i++ {
+		ev := audit.Event{
+			ID:        fmt.Sprintf("evt-%04d", i),
+			Timestamp: tied,
+			ToolName:  "echo",
+			Transport: "http",
+			Source:    "mcp",
+			Success:   true,
+		}
+		if err := store.Log(ctx, ev); err != nil {
+			t.Fatalf("Log %d: %v", i, err)
+		}
+	}
+
+	seen := make(map[string]int, n)
+	if err := store.Stream(ctx, audit.QueryFilter{}, func(ev audit.Event) error {
+		seen[ev.ID]++
+		return nil
+	}); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	if len(seen) != n {
+		t.Fatalf("distinct ids visited = %d, want %d", len(seen), n)
+	}
+	for id, c := range seen {
+		if c != 1 {
+			t.Errorf("id %s seen %d times, want 1 (duplicate at page boundary)", id, c)
+		}
+	}
+}
+
 func TestStore_Stream_PagesThroughCursor(t *testing.T) {
 	ctx := context.Background()
 	url := startPostgres(ctx, t)

@@ -29,12 +29,31 @@ type PayloadLogger interface {
 // over a filtered event set. The NDJSON export endpoint type-asserts
 // for it so we don't load the entire result set into memory.
 //
-// fn is called once per event; returning a non-nil error stops the
-// iteration and bubbles back to Stream's caller. Loggers that don't
-// implement this interface fall back to Query() with a hard cap.
+// Semantics:
+//   - f.Limit and f.Offset are IGNORED by implementations that can
+//     truly stream (Postgres, MemoryLogger). Stream iterates the whole
+//     filtered set; the caller stops early by returning a sentinel
+//     error from fn. The export endpoint does this with its own cap.
+//   - fn is called once per event; returning a non-nil error stops the
+//     iteration and bubbles back to Stream's caller. ctx cancellation
+//     is honored at page boundaries.
+//
+// Implementations that wrap a Logger which does NOT itself implement
+// StreamingLogger (e.g. AsyncLogger over a custom non-streaming inner)
+// degrade to a single bounded Query() call capped at MaxQueryLimit;
+// such implementations can deliver fewer events than the filter would
+// match. See AsyncLogger.Stream for the fallback contract.
 type StreamingLogger interface {
 	Stream(ctx context.Context, f QueryFilter, fn func(Event) error) error
 }
+
+// MaxQueryLimit is the largest LIMIT any backend will honor on a single
+// SELECT. Larger values get silently reduced. Defined here (not in the
+// Postgres package) so AsyncLogger and any other Logger wrapper can
+// honor the same cap when falling back to Query()-driven iteration,
+// avoiding the silent-cap-mismatch where a wrapper promises N rows
+// and the underlying backend delivers fewer.
+const MaxQueryLimit = 1000
 
 // TimePoint is one bucket of an audit time series.
 type TimePoint struct {

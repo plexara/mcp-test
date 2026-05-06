@@ -109,15 +109,19 @@ func (a *AsyncLogger) GetPayload(ctx context.Context, eventID string) (*Payload,
 }
 
 // Stream delegates to the inner Logger when it implements StreamingLogger.
-// Falls back to a buffered Query when not, capped at the Limit on f
-// (or a default 10000) so the export endpoint can still serve a
-// bounded result without unbounded memory.
+// Falls back to a buffered Query() call capped at MaxQueryLimit when not,
+// so a Logger that lacks streaming still produces a bounded result.
+//
+// The fallback cap matches the underlying-backend cap (audit.MaxQueryLimit)
+// so a wrapper can't promise N rows and have the backend silently deliver
+// fewer. Callers needing more than MaxQueryLimit must wire a Logger that
+// implements StreamingLogger directly.
 func (a *AsyncLogger) Stream(ctx context.Context, f QueryFilter, fn func(Event) error) error {
 	if sl, ok := a.inner.(StreamingLogger); ok {
 		return sl.Stream(ctx, f, fn)
 	}
-	if f.Limit <= 0 {
-		f.Limit = 10000
+	if f.Limit <= 0 || f.Limit > MaxQueryLimit {
+		f.Limit = MaxQueryLimit
 	}
 	evs, err := a.inner.Query(ctx, f)
 	if err != nil {
