@@ -65,7 +65,7 @@ func TestPortalAPI_Instructions(t *testing.T) {
 		APIKeys: config.APIKeysConfig{},
 		Portal:  config.PortalConfig{Enabled: true, CookieSecret: "secret-secret-padded"},
 	}
-	api := NewPortalAPI(cfg, nil, audit.NewMemoryLogger())
+	api := NewPortalAPI(cfg, nil, audit.NewMemoryLogger(), nil, nil)
 	mux := http.NewServeMux()
 	api.Mount(mux, func(h http.Handler) http.Handler { return h })
 

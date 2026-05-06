@@ -30,7 +30,7 @@ func portalTestMux(t *testing.T, mem *audit.MemoryLogger) *http.ServeMux {
 	}
 	reg := tools.NewRegistry()
 	reg.Add(identity.New([]string{"cookie"}))
-	api := NewPortalAPI(cfg, reg, mem)
+	api := NewPortalAPI(cfg, reg, mem, nil, nil)
 
 	mw := func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

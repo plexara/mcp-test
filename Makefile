@@ -147,6 +147,40 @@ govulncheck: tools-check
 ## security: gosec + govulncheck
 security: gosec govulncheck
 
+## codeql: Run the same CodeQL security-and-quality suite CI runs.
+##         Requires the codeql CLI on PATH (brew install codeql or
+##         download from https://github.com/github/codeql-cli-binaries).
+##         Heavy (~3 min on first run, ~1 min cached). Not part of
+##         `make verify` by default; run before opening a PR.
+##
+##         The config file at .github/codeql/codeql-config.yml is
+##         the single source of truth for query exclusions; this
+##         target uses the same file CI does so local results match.
+CODEQL_DB     ?= $(BUILD_DIR)/codeql-db
+CODEQL_RESULT ?= $(BUILD_DIR)/codeql-results.sarif
+codeql:
+	@command -v codeql >/dev/null 2>&1 || { \
+		echo "FAIL: codeql CLI not on PATH."; \
+		echo "  brew install codeql"; \
+		echo "  (or fetch from https://github.com/github/codeql-cli-binaries/releases)"; \
+		exit 1; \
+	}
+	@echo "Building CodeQL database (Go) at $(CODEQL_DB)..."
+	@rm -rf $(CODEQL_DB)
+	@mkdir -p $(BUILD_DIR)
+	codeql database create $(CODEQL_DB) --language=go --source-root=. --overwrite
+	@echo "Analyzing with security-and-quality + project config..."
+	codeql database analyze $(CODEQL_DB) \
+		codeql/go-queries:codeql-suites/go-security-and-quality.qls \
+		--format=sarif-latest \
+		--output=$(CODEQL_RESULT) \
+		--threads=0 \
+		--sarif-category=/language:go
+	@echo ""
+	@echo "Filtering against .github/codeql/codeql-config.yml exclusions..."
+	@./scripts/codeql-gate.sh $(CODEQL_RESULT) .github/codeql/codeql-config.yml
+	@echo "CodeQL: clean."
+
 COVERAGE_MIN ?= 80
 
 ## coverage: Run tests and produce a per-package coverage profile.

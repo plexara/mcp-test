@@ -55,6 +55,27 @@ type StreamingLogger interface {
 // and the underlying backend delivers fewer.
 const MaxQueryLimit = 1000
 
+// SubscribingLogger is the optional capability for fan-out of newly
+// written audit events to live consumers (the SSE live-tail endpoint
+// is the primary use). Stores or wrappers that broadcast events on
+// Log() implement it; the consumer type-asserts before subscribing.
+//
+// Semantics:
+//   - Subscribe returns a receive-only channel of events plus a
+//     cancel func. The caller MUST call cancel() on disconnect to
+//     release the slot; otherwise the registry leaks.
+//   - The channel is buffered with `buf` slots. When a producer
+//     writes faster than the consumer drains, events are dropped
+//     for that subscriber (the producer never blocks on a slow
+//     consumer). Picking buf is a tradeoff between memory and the
+//     drop rate; 64 is a reasonable starting point for SSE.
+//   - Subscribers see events that succeeded at the underlying
+//     backend (in AsyncLogger, the broadcast happens after
+//     inner.Log() returns nil). Failed writes are not surfaced.
+type SubscribingLogger interface {
+	Subscribe(buf int) (<-chan Event, func())
+}
+
 // TimePoint is one bucket of an audit time series.
 type TimePoint struct {
 	Time     time.Time `json:"time"`
