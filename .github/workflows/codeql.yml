@@ -42,8 +42,9 @@ jobs:
         with:
           languages: go
           # security-and-quality bundles the security pack with style /
-          # correctness rules. Findings post to the repo's Security tab.
-          queries: security-and-quality
+          # correctness rules. Project-specific query exclusions live
+          # in the config-file; findings post to the repo's Security tab.
+          config-file: ./.github/codeql/codeql-config.yml
 
       - name: Autobuild
         uses: github/codeql-action/autobuild@95e58e9a2cdfd71adc6e0353d5c52f41a045d225 # v4.35.2

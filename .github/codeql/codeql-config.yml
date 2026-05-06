@@ -1,0 +1,27 @@
+# mcp-test CodeQL configuration.
+#
+# Referenced from .github/workflows/codeql.yml via config-file. Without
+# this, CodeQL uses the default suite plus no project-specific tuning.
+
+name: "mcp-test CodeQL"
+
+queries:
+  - uses: security-and-quality
+
+# Repository-wide query filters. Each entry must justify why a query is
+# excluded; "looks scary" is not a reason. The audit logger is the only
+# legitimate "Log function with potentially sensitive data" sink in this
+# project, and that's by design (forensics over discretion). Adding
+# any new Log-named function in this codebase MUST be reviewed against
+# this exception, since the rule no longer fires globally.
+query-filters:
+  - exclude:
+      id: go/clear-text-logging
+      # Justification: audit.Logger.Log captures full audit_events
+      # rows (sanitized via redact_keys) by design. CodeQL traces
+      # err.Error() -> Event.ErrorMessage -> *ev -> Log() and flags
+      # the whole chain. The error message is what an operator NEEDS
+      # to see during incident review; suppressing it would defeat
+      # the audit pipeline. gosec and semgrep still cover other
+      # cleartext-credential-in-log patterns at the function-call
+      # level (e.g. fmt.Println, log.Print*).
