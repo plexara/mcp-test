@@ -1,7 +1,9 @@
 package httpsrv
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -39,6 +41,7 @@ func (p *PortalAPI) Mount(mux *http.ServeMux, mw func(http.Handler) http.Handler
 	mux.Handle("GET /api/v1/portal/tools/{name}", mw(http.HandlerFunc(p.toolDetail)))
 	mux.Handle("GET /api/v1/portal/audit/events", mw(http.HandlerFunc(p.auditEvents)))
 	mux.Handle("GET /api/v1/portal/audit/events/{id}", mw(http.HandlerFunc(p.auditEventDetail)))
+	mux.Handle("GET /api/v1/portal/audit/export", mw(http.HandlerFunc(p.auditExport)))
 	mux.Handle("GET /api/v1/portal/audit/timeseries", mw(http.HandlerFunc(p.auditTimeseries)))
 	mux.Handle("GET /api/v1/portal/audit/breakdown", mw(http.HandlerFunc(p.auditBreakdown)))
 	mux.Handle("GET /api/v1/portal/dashboard", mw(http.HandlerFunc(p.dashboard)))
@@ -117,6 +120,31 @@ func (p *PortalAPI) toolDetail(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
 }
 
+// validPath reports whether path is non-empty, has no empty segments,
+// and contains no ASCII control characters. Empty segments
+// ("?param.a..b=v" -> ["a","","b"]) can't match any real payload, and
+// control bytes in a path could land in slog lines (a malformed-filter
+// path is logged via truncateForLog) and inject newlines / tabs into
+// the log stream. Reject at parse time rather than depending on every
+// downstream sink to sanitize.
+func validPath(path []string) bool {
+	if len(path) == 0 {
+		return false
+	}
+	for _, seg := range path {
+		if seg == "" {
+			return false
+		}
+		for i := 0; i < len(seg); i++ {
+			c := seg[i]
+			if c < 0x20 || c == 0x7f {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func parseQueryFilter(r *http.Request) audit.QueryFilter {
 	q := r.URL.Query()
 	f := audit.QueryFilter{}
@@ -147,6 +175,52 @@ func parseQueryFilter(r *http.Request) audit.QueryFilter {
 	if v, _ := strconv.Atoi(q.Get("offset")); v > 0 {
 		f.Offset = v
 	}
+
+	// JSONB path filters and has= shortcuts. Anything malformed
+	// (unknown source, empty path segment, unknown has key) is silently
+	// dropped rather than failing the whole query, matching how unknown
+	// plain query params are handled above.
+	for k, vs := range q {
+		switch {
+		case strings.HasPrefix(k, "param."), strings.HasPrefix(k, "response."), strings.HasPrefix(k, "header."):
+			source, rest, ok := strings.Cut(k, ".")
+			if !ok || rest == "" || !audit.IsAllowedJSONSource(source) {
+				continue
+			}
+			path := audit.SplitJSONPath(rest)
+			if !validPath(path) {
+				continue
+			}
+			// Headers are a flat map[string][]string on the wire and on
+			// disk; only one path segment is meaningful (the header name).
+			// Reject ?header.X-Api-Key.foo=v at parse time rather than
+			// silently truncating .foo, which would mislead the operator
+			// about what was actually matched.
+			if source == "header" {
+				if len(path) != 1 {
+					continue
+				}
+				path[0] = http.CanonicalHeaderKey(path[0])
+			}
+			for _, v := range vs {
+				if v == "" {
+					continue
+				}
+				f.JSONFilters = append(f.JSONFilters, audit.JSONPathFilter{
+					Source: source,
+					Path:   path,
+					Value:  v,
+				})
+			}
+		case k == "has":
+			for _, v := range vs {
+				if audit.IsAllowedHasKey(v) {
+					f.HasKeys = append(f.HasKeys, v)
+				}
+			}
+		}
+	}
+
 	return f
 }
 
@@ -230,6 +304,143 @@ func (p *PortalAPI) auditEventDetail(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, ev)
 }
+
+// maxExportEvents caps the export endpoint at a fixed event count
+// regardless of operator filters, so a misconfigured export can't
+// hold the database open or run an httptest pool out of memory.
+// Operators wanting more should narrow the filter or page through
+// /audit/events directly.
+const maxExportEvents = 100_000
+
+// auditExport streams a filtered slice of events as newline-delimited
+// JSON (jsonl). Filters mirror /audit/events; the only required
+// parameter is format=jsonl (other formats reserved for future).
+//
+// The summary row (no payload) is what's emitted, matching what
+// /events returns. Operators who need the payload should fetch
+// individual events via /audit/events/{id} after filtering.
+func (p *PortalAPI) auditExport(w http.ResponseWriter, r *http.Request) {
+	if got := r.URL.Query().Get("format"); got != "" && got != "jsonl" {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("unsupported format %q (only jsonl is supported)", got))
+		return
+	}
+	f := parseQueryFilter(r)
+	// Limit/Offset apply differently here: Limit caps the export, but
+	// the underlying paginated stream uses its own page size. Map the
+	// caller's Limit (if any) onto a hard ceiling, and clear Offset so
+	// streams always start from the head of the matching set.
+	exportCap := f.Limit
+	if exportCap <= 0 || exportCap > maxExportEvents {
+		exportCap = maxExportEvents
+	}
+	f.Limit = 0
+	f.Offset = 0
+
+	sl, ok := p.audit.(audit.StreamingLogger)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("export not supported by configured audit backend"))
+		return
+	}
+
+	// All response headers are deferred until the first row encodes
+	// successfully (or the no-rows-success terminal write). If Stream
+	// errors before any row (DB down, planner failure on first page),
+	// writeError can still send a real 5xx with the right Content-Type;
+	// if we'd already sent the ndjson + attachment headers, a 500 JSON
+	// body would download as "audit.jsonl" in a browser.
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false) // raw '<' in tool output, not "&lt;"
+	written := 0
+	headerWritten := false
+	flusher, _ := w.(http.Flusher)
+
+	// writeExportHeaders is the single place export-specific response
+	// headers are committed. Called once, atomically, before the first
+	// body byte. Audit data is operator-sensitive (user IDs, request
+	// payloads, error messages), so no-store is mandatory; the
+	// attachment hint is for browser-driven downloads.
+	writeExportHeaders := func() {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		w.Header().Set("Content-Disposition", `attachment; filename="audit.jsonl"`)
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusOK)
+		headerWritten = true
+	}
+
+	err := sl.Stream(r.Context(), f, func(ev audit.Event) error {
+		// Per-row ctx check so a client disconnect doesn't waste a
+		// full Postgres page (1000 rows) before the page-level ctx
+		// check fires inside Stream itself.
+		if err := r.Context().Err(); err != nil {
+			return err
+		}
+		if written >= exportCap {
+			// Bail by returning a sentinel; the closure can't write a
+			// trailer mid-stream once headers are out, so just stop.
+			return errExportCapped
+		}
+		// Payload is summary-only on this endpoint; clear any in-memory
+		// pointer set by the underlying logger before encoding.
+		ev.Payload = nil
+		if !headerWritten {
+			writeExportHeaders()
+		}
+		if err := enc.Encode(&ev); err != nil {
+			return err
+		}
+		written++
+		// Flush every 100 lines so a slow consumer sees data promptly
+		// and a long-running export shows progress.
+		if flusher != nil && written%100 == 0 {
+			flusher.Flush()
+		}
+		return nil
+	})
+	switch {
+	case err == nil, errors.Is(err, errExportCapped):
+		// Success path. Filter that matched zero rows still owes the
+		// client 200 OK with an empty body.
+		if !headerWritten {
+			writeExportHeaders()
+		}
+		if flusher != nil {
+			flusher.Flush()
+		}
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		// Client disconnect or request timeout. If headers haven't
+		// gone out we deliberately do NOT commit them (avoids
+		// implicit 200 OK when the client gave up); if they have,
+		// flush the partial response so the client sees what we got.
+		if headerWritten && flusher != nil {
+			flusher.Flush()
+		}
+	case !headerWritten:
+		// Real backend error before the first row. Headers haven't
+		// committed yet, so we can return a usable status. We log
+		// the wrapped error at WARN and return a generic message to
+		// the client to avoid leaking pgx / driver internals.
+		slog.Warn("audit: export stream failed before first row",
+			"err", err,
+		)
+		writeError(w, http.StatusInternalServerError,
+			fmt.Errorf("export stream failed (see server logs)"))
+	default:
+		// Mid-flight failure: headers already out, can only log and
+		// truncate. Client sees a partial response.
+		slog.Warn("audit: export stream failed mid-flight",
+			"err", err,
+			"written", written,
+		)
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+}
+
+// errExportCapped is the sentinel a Stream callback returns to signal
+// the export hit maxExportEvents (or the operator-supplied cap) and
+// should stop without surfacing as a real error.
+var errExportCapped = errors.New("export cap reached")
 
 // maxTimeseriesWindow caps the requested time-series window at 30 days
 // regardless of bucket size, to bound query cost on the audit table.

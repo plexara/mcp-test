@@ -108,6 +108,41 @@ func (a *AsyncLogger) GetPayload(ctx context.Context, eventID string) (*Payload,
 	return pl.GetPayload(ctx, eventID)
 }
 
+// Stream delegates to the inner Logger when it implements StreamingLogger.
+// Falls back to a buffered Query() call capped at MaxQueryLimit when not,
+// so a Logger that lacks streaming still produces a bounded result.
+//
+// The fallback enforces the cap inside this method, not by trusting the
+// inner Query() to honor f.Limit, because some Logger implementations
+// (test fakes, custom backends) ignore Limit. Stop iterating after
+// MaxQueryLimit events regardless of how many inner returned.
+//
+// Callers needing more than MaxQueryLimit must wire a Logger that
+// implements StreamingLogger directly.
+func (a *AsyncLogger) Stream(ctx context.Context, f QueryFilter, fn func(Event) error) error {
+	if sl, ok := a.inner.(StreamingLogger); ok {
+		return sl.Stream(ctx, f, fn)
+	}
+	// Set f.Limit as a hint for backends that honor it; we don't rely
+	// on it. The hard cap below is the source of truth.
+	if f.Limit <= 0 || f.Limit > MaxQueryLimit {
+		f.Limit = MaxQueryLimit
+	}
+	evs, err := a.inner.Query(ctx, f)
+	if err != nil {
+		return err
+	}
+	for i, ev := range evs {
+		if i >= MaxQueryLimit {
+			return nil
+		}
+		if err := fn(ev); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Close stops accepting new events and waits for the queue to drain.
 func (a *AsyncLogger) Close() {
 	a.stopOnce.Do(func() { close(a.stop) })
@@ -176,4 +211,9 @@ func (NoopLogger) Breakdown(context.Context, time.Time, time.Time, string) ([]Br
 // Stats returns zeroed stats.
 func (NoopLogger) Stats(context.Context, time.Time, time.Time) (Stats, error) {
 	return Stats{}, nil
+}
+
+// Stream is a no-op: the noop logger has nothing to iterate.
+func (NoopLogger) Stream(context.Context, QueryFilter, func(Event) error) error {
+	return nil
 }

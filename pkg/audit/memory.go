@@ -33,9 +33,13 @@ func (m *MemoryLogger) Log(_ context.Context, ev Event) error {
 // UserID, From, To, Success, and Limit are honored; other filter fields are
 // ignored. Sufficient for tests; the Postgres store covers the full filter
 // surface.
-func (m *MemoryLogger) Query(_ context.Context, f QueryFilter) ([]Event, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+// matchAll applies every QueryFilter predicate EXCEPT Limit/Offset and
+// returns the matching events in canonical Query order (ts DESC, id ASC).
+// Shared by Query, Count, and Stream so all three agree on filter
+// semantics and ordering regardless of pagination.
+//
+// Caller must hold m.mu.
+func (m *MemoryLogger) matchAll(f QueryFilter) []Event {
 	out := make([]Event, 0, len(m.events))
 	for _, ev := range m.events {
 		if !matchesFilter(ev, f) {
@@ -43,23 +47,79 @@ func (m *MemoryLogger) Query(_ context.Context, f QueryFilter) ([]Event, error) 
 		}
 		out = append(out, ev)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Timestamp.After(out[j].Timestamp) })
-	if f.Limit > 0 && len(out) > f.Limit {
-		out = out[:f.Limit]
+	// ts DESC, id ASC. Mirrors the Postgres store's ordering so the
+	// two backends agree under tied timestamps; without the tiebreaker,
+	// Stream pagination can duplicate or skip rows at page boundaries.
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].Timestamp.Equal(out[j].Timestamp) {
+			return out[i].Timestamp.After(out[j].Timestamp)
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out
+}
+
+// Query returns matching events ordered ts DESC, id ASC, with the
+// limit-clamp rules described inline. Calls matchAll to share filter
+// semantics with Count and Stream.
+func (m *MemoryLogger) Query(_ context.Context, f QueryFilter) ([]Event, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := m.matchAll(f)
+	// Limit-clamp rules, mirroring Postgres buildSelect:
+	//   Limit <= 0 (unset / negative) -> default page size (100)
+	//   0 < Limit <= MaxQueryLimit    -> honored as given
+	//   Limit > MaxQueryLimit         -> clamped to MaxQueryLimit
+	// Count and Stream do NOT route through here; they use matchAll
+	// directly so the page-size default doesn't truncate them.
+	limit := f.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > MaxQueryLimit {
+		limit = MaxQueryLimit
+	}
+	if len(out) > limit {
+		out = out[:limit]
 	}
 	return out, nil
 }
 
-// Count returns the number of matching events, ignoring Limit/Offset so
-// pagination metadata is correct.
-func (m *MemoryLogger) Count(ctx context.Context, f QueryFilter) (int64, error) {
-	f.Limit = 0
-	f.Offset = 0
-	evs, err := m.Query(ctx, f)
-	if err != nil {
-		return 0, err
+// Count returns the number of matching events. Ignores f.Limit and
+// f.Offset so pagination metadata is correct (Postgres uses
+// SELECT count(*); MemoryLogger uses len() over matchAll). Routing
+// through Query would silently cap at the page-size default.
+func (m *MemoryLogger) Count(_ context.Context, f QueryFilter) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return int64(len(m.matchAll(f))), nil
+}
+
+// Stream calls fn once per matching event, in the same order Query would
+// return them. Used by the NDJSON export to avoid loading the full
+// result set into memory; for the in-memory logger the savings are
+// theoretical, but the contract matches the Postgres store's cursor.
+//
+// Per the StreamingLogger contract, f.Limit and f.Offset are ignored:
+// Stream iterates the whole filtered set; callers stop early by
+// returning a sentinel error from fn. Uses matchAll directly so the
+// 100-row page-size default in Query never reaches this path.
+func (m *MemoryLogger) Stream(ctx context.Context, f QueryFilter, fn func(Event) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	return int64(len(evs)), nil
+	m.mu.Lock()
+	evs := m.matchAll(f)
+	m.mu.Unlock()
+	for _, ev := range evs {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := fn(ev); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Snapshot returns a copy of all events in insertion order, for assertions.
@@ -240,6 +300,119 @@ func matchesFilter(ev Event, f QueryFilter) bool {
 	}
 	if f.Success != nil && ev.Success != *f.Success {
 		return false
+	}
+	if !matchesJSONFilters(ev, f.JSONFilters) {
+		return false
+	}
+	if !matchesHasKeys(ev, f.HasKeys) {
+		return false
+	}
+	return true
+}
+
+// matchesJSONFilters runs each JSONPathFilter against ev.Payload using
+// the same path semantics the Postgres store will compile to JSONB
+// containment. Returns false the moment any filter misses; an event
+// with no payload row fails any non-empty filter.
+func matchesJSONFilters(ev Event, fs []JSONPathFilter) bool {
+	if len(fs) == 0 {
+		return true
+	}
+	if ev.Payload == nil {
+		return false
+	}
+	for _, jf := range fs {
+		var src map[string]any
+		switch jf.Source {
+		case "param":
+			src = ev.Payload.RequestParams
+		case "response":
+			src = ev.Payload.ResponseResult
+		case "header":
+			// Headers are map[string][]string in Go and serialize to
+			// JSONB as {"Name": ["value", ...]}. Postgres-side @>
+			// containment matches when the array contains the wanted
+			// value; mirror that here by accepting a hit on any of the
+			// stored values for the named header.
+			if ev.Payload.RequestHeaders == nil {
+				return false
+			}
+			if len(jf.Path) == 0 {
+				return false
+			}
+			values, ok := ev.Payload.RequestHeaders[jf.Path[0]]
+			if !ok || len(values) == 0 {
+				return false
+			}
+			// Header values are always strings on the wire; compare the
+			// raw filter value as a string rather than running it through
+			// ParseJSONFilterValue. Mirrors what the Postgres compiler does.
+			matched := false
+			for _, v := range values {
+				if v == jf.Value {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return false
+			}
+			continue
+		default:
+			return false
+		}
+		if src == nil {
+			return false
+		}
+		want := ParseJSONFilterValue(jf.Value)
+		if !MatchJSONPath(src, jf.Path, want) {
+			return false
+		}
+	}
+	return true
+}
+
+// matchesHasKeys returns false when any required has= column is missing
+// from the event's payload. AllowedHasKeys is the closed set; anything
+// else returns false (the HTTP layer should have rejected it earlier,
+// but defense in depth).
+func matchesHasKeys(ev Event, keys []string) bool {
+	if len(keys) == 0 {
+		return true
+	}
+	if ev.Payload == nil {
+		return false
+	}
+	p := ev.Payload
+	for _, k := range keys {
+		switch k {
+		case "request_params":
+			if len(p.RequestParams) == 0 {
+				return false
+			}
+		case "request_headers":
+			if len(p.RequestHeaders) == 0 {
+				return false
+			}
+		case "response_result":
+			if len(p.ResponseResult) == 0 {
+				return false
+			}
+		case "response_error":
+			if len(p.ResponseError) == 0 {
+				return false
+			}
+		case "notifications":
+			if len(p.Notifications) == 0 {
+				return false
+			}
+		case "replayed_from":
+			if p.ReplayedFrom == "" {
+				return false
+			}
+		default:
+			return false
+		}
 	}
 	return true
 }

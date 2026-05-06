@@ -279,6 +279,64 @@ func (s *Store) Query(ctx context.Context, f audit.QueryFilter) ([]audit.Event, 
 	return out, rows.Err()
 }
 
+// Stream iterates the filtered event set via the same SELECT used by
+// Query, calling fn once per row. This avoids buffering the full set
+// in memory for export endpoints; pgx itself uses a network-level
+// cursor under the hood.
+//
+// Stream uses audit.MaxQueryLimit as the page size and walks pages with
+// f.Offset until a page returns fewer rows. Sharing one constant with
+// buildSelect avoids a silent reset to the much smaller default if
+// either side moves.
+//
+// Concurrent-insert caveat: ORDER BY ts DESC + OFFSET pagination is
+// unstable when new rows arrive at the head between pages, since each
+// new row shifts every later row down by one offset slot. Under heavy
+// concurrent writes during a long export, a row at the page boundary
+// can appear in two consecutive pages. Consumers that care should
+// dedupe by Event.ID; a future revision can switch to a ts cursor
+// (WHERE ts < $cursor) for a true snapshot guarantee.
+func (s *Store) Stream(ctx context.Context, f audit.QueryFilter, fn func(audit.Event) error) error {
+	// Per the StreamingLogger contract f.Limit and f.Offset are
+	// ignored; Stream iterates the whole filtered set and uses an
+	// internal page cursor (page.Offset) for pagination.
+	page := f
+	page.Limit = audit.MaxQueryLimit
+	page.Offset = 0
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		q, args := buildSelect(page, false)
+		rows, err := s.pool.Query(ctx, q, args...)
+		if err != nil {
+			return err
+		}
+		count := 0
+		for rows.Next() {
+			ev, err := scanEvent(rows)
+			if err != nil {
+				rows.Close()
+				return err
+			}
+			if err := fn(ev); err != nil {
+				rows.Close()
+				return err
+			}
+			count++
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+		if count < audit.MaxQueryLimit {
+			return nil
+		}
+		page.Offset += audit.MaxQueryLimit
+	}
+}
+
 // Count returns the number of matching events without paging.
 func (s *Store) Count(ctx context.Context, f audit.QueryFilter) (int64, error) {
 	q, args := buildSelect(f, true)
@@ -438,6 +496,31 @@ func breakdownColumn(dim string) string {
 	return ""
 }
 
+// truncateForLog returns s capped at max bytes, with an ellipsis
+// suffix when truncated. Used by the JSON-filter compile-error log so
+// a malformed path doesn't blow out the slog line.
+func truncateForLog(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "..."
+}
+
+// jsonFilterColumn maps a QueryFilter.JSONPathFilter Source into the
+// audit_payloads JSONB column name. Unknown sources return "" and are
+// skipped at the call site.
+func jsonFilterColumn(source string) string {
+	switch source {
+	case "param":
+		return "request_params"
+	case "response":
+		return "response_result"
+	case "header":
+		return "request_headers"
+	}
+	return ""
+}
+
 func buildSelect(f audit.QueryFilter, count bool) (string, []any) {
 	var (
 		conds []string
@@ -483,6 +566,87 @@ func buildSelect(f audit.QueryFilter, count bool) (string, []any) {
 		i += 3
 	}
 
+	// JSON path filters: each compiles to an EXISTS subquery against
+	// audit_payloads.<column> @> $N::jsonb. The containment doc is built
+	// from the dotted path so a single ?param.user.id=alice produces
+	// {"user":{"id":"alice"}}, which the GIN(jsonb_path_ops) index can
+	// answer cheaply. Source has already been validated against the
+	// closed AllowedJSONSources set at the HTTP layer.
+	for _, jf := range f.JSONFilters {
+		col := jsonFilterColumn(jf.Source)
+		if col == "" {
+			continue
+		}
+		var doc any
+		if jf.Source == "header" {
+			// Headers are stored as {"User-Agent":["curl/8.0"]}: the
+			// containment doc wraps the value in an array at the leaf.
+			// Header values are always strings on the wire; force the
+			// raw value rather than running it through ParseJSONFilterValue
+			// so ?header.X-Count=42 matches a stored "42" not JSON 42.
+			if len(jf.Path) == 0 {
+				continue
+			}
+			doc = map[string]any{
+				jf.Path[0]: []any{jf.Value},
+			}
+		} else {
+			doc = audit.JSONFilterToContainment(jf.Path, audit.ParseJSONFilterValue(jf.Value))
+		}
+		b, err := json.Marshal(doc)
+		if err != nil {
+			// Silently dropping the filter would broaden the result
+			// set without telling the operator. Log and skip; the
+			// filter inputs are constructed from sanitized URL parts
+			// plus ParseJSONFilterValue output, so this branch should
+			// be unreachable in practice. We log the joined path
+			// (capped) so an operator can correlate against the
+			// failing request.
+			slog.Warn("audit: json filter compile failed; filter dropped",
+				"source", jf.Source,
+				"path", truncateForLog(strings.Join(jf.Path, "."), 256),
+				"err", err,
+			)
+			continue
+		}
+		conds = append(conds, fmt.Sprintf(
+			"EXISTS (SELECT 1 FROM audit_payloads p WHERE p.event_id = audit_events.id AND p.%s @> $%d::jsonb)",
+			col, i,
+		))
+		args = append(args, string(b))
+		i++
+	}
+
+	// has= filters: shorthand for "this payload column is non-empty".
+	// We treat NULL, empty-JSONB forms ('{}'::jsonb, '[]'::jsonb,
+	// 'null'::jsonb), and empty TEXT ('') as "missing"; only a payload
+	// column with actual content counts. This matches MemoryLogger's
+	// len/IsZero-based check on every allowlisted column type
+	// (request_* / response_* / notifications are JSONB; replayed_from
+	// is TEXT) so the two backends agree on edge cases.
+	//
+	// The empty-string entry covers the TEXT column case (replayed_from)
+	// where '' is a valid stored value but semantically "missing." For
+	// JSONB columns, '' isn't a valid stored value so the entry is a
+	// harmless extra match.
+	//
+	// Validated against AllowedHasKeys at the HTTP layer; the column
+	// name is allow-listed so the verbatim splice is safe. Note: this
+	// loop deliberately does NOT increment `i`; no $N placeholder is
+	// bound here. A future maintainer adding a bound argument must
+	// increment `i` to keep LIMIT/OFFSET aligned.
+	for _, k := range f.HasKeys {
+		if !audit.IsAllowedHasKey(k) {
+			continue
+		}
+		conds = append(conds, fmt.Sprintf(
+			"EXISTS (SELECT 1 FROM audit_payloads p WHERE p.event_id = audit_events.id "+
+				"AND p.%s IS NOT NULL "+
+				"AND p.%s::text NOT IN ('{}', '[]', 'null', ''))",
+			k, k,
+		))
+	}
+
 	where := ""
 	if len(conds) > 0 {
 		where = " WHERE " + strings.Join(conds, " AND ")
@@ -492,9 +656,16 @@ func buildSelect(f audit.QueryFilter, count bool) (string, []any) {
 		return "SELECT count(*) FROM audit_events" + where, args
 	}
 
+	// Two distinct cases, kept separate so the doc on audit.MaxQueryLimit
+	// ("larger values get silently reduced") is honored. A caller asking
+	// for too much is clamped to MaxQueryLimit, not collapsed back to the
+	// page-size default; an unset limit gets the page-size default.
 	limit := f.Limit
-	if limit <= 0 || limit > 1000 {
+	if limit <= 0 {
 		limit = 100
+	}
+	if limit > audit.MaxQueryLimit {
+		limit = audit.MaxQueryLimit
 	}
 	args = append(args, limit, f.Offset)
 	return "SELECT id, ts, duration_ms, " +
@@ -506,7 +677,12 @@ func buildSelect(f audit.QueryFilter, count bool) (string, []any) {
 		"request_chars, response_chars, content_blocks, " +
 		"transport, source, COALESCE(remote_addr, ''), COALESCE(user_agent, '') " +
 		"FROM audit_events" + where +
-		" ORDER BY ts DESC" +
+		// id ASC is the tiebreaker for tied timestamps. Without it,
+		// two events with the same ts can swap positions between pages
+		// of a Stream walk, causing both duplicate emission and missed
+		// emission across page boundaries. Tied ts is common under any
+		// sub-millisecond write rate.
+		" ORDER BY ts DESC, id ASC" +
 		fmt.Sprintf(" LIMIT $%d OFFSET $%d", i, i+1), args
 }
 

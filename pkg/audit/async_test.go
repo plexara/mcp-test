@@ -104,6 +104,57 @@ func TestAsyncLogger_DropsWhenFull(t *testing.T) {
 	}
 }
 
+func TestAsyncLogger_StreamFallback_NonStreamingInner(t *testing.T) {
+	// fakeLogger above does NOT implement StreamingLogger (no Stream
+	// method). AsyncLogger.Stream must fall back to a bounded Query()
+	// rather than panic or no-op. Documented as best-effort, capped
+	// at MaxQueryLimit; assert events flow through and the cap holds.
+	inner := &fakeLogger{}
+	for i := 0; i < 5; i++ {
+		inner.events = append(inner.events, Event{ToolName: "t", ID: string(rune('a' + i))})
+	}
+	a := NewAsyncLogger(inner, 16, time.Second, quietLogger())
+	defer a.Close()
+
+	count := 0
+	if err := a.Stream(context.Background(), QueryFilter{}, func(Event) error {
+		count++
+		return nil
+	}); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	if count != 5 {
+		t.Errorf("count = %d, want 5", count)
+	}
+}
+
+func TestAsyncLogger_StreamFallback_ClampsToMaxQueryLimit(t *testing.T) {
+	// fakeLogger does NOT implement StreamingLogger AND does not honor
+	// QueryFilter.Limit (Query returns all events). The Stream fallback
+	// must enforce the MaxQueryLimit cap itself rather than trusting
+	// the inner backend to do it. Push more than the cap; assert fn
+	// is invoked exactly MaxQueryLimit times.
+	inner := &fakeLogger{}
+	const stored = MaxQueryLimit + 500
+	for i := 0; i < stored; i++ {
+		inner.events = append(inner.events, Event{ToolName: "t"})
+	}
+	a := NewAsyncLogger(inner, 16, time.Second, quietLogger())
+	defer a.Close()
+
+	count := 0
+	if err := a.Stream(context.Background(), QueryFilter{}, func(Event) error {
+		count++
+		return nil
+	}); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	if count != MaxQueryLimit {
+		t.Errorf("count = %d, want MaxQueryLimit (%d): wrapper failed to enforce cap when inner ignored Limit",
+			count, MaxQueryLimit)
+	}
+}
+
 func TestAsyncLogger_DelegatesReadMethods(t *testing.T) {
 	inner := &fakeLogger{events: []Event{{ToolName: "x"}, {ToolName: "y"}}}
 	a := NewAsyncLogger(inner, 16, time.Second, quietLogger())

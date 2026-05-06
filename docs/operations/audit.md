@@ -10,6 +10,15 @@ table. Auth failures, the portal's Try-It proxy, and direct admin-API
 invocations all show up there too, with different `source` tags so
 you can filter by origin.
 
+## Two-table layout
+
+As of v1.1.0 audit data lives in two tables joined 1:1 by event ID:
+
+- `audit_events`: indexed summary used for time-range, tool, user, success, and free-text queries. Small rows, hot path.
+- `audit_payloads`: full request and response envelope (parameters, headers, result content blocks, captured notifications, error categories). Optional, written in the same transaction as the summary; absent when `audit.capture_payloads: false` or when the deployment predates v1.1.0.
+
+Cascade delete on the foreign key keeps retention atomic: deleting an `audit_events` row drops its payload row in the same statement.
+
 ## What gets recorded
 
 | Column | Source |
@@ -49,10 +58,72 @@ p50 / p95 latency, unique users / tools, and a recent-activity table.
 
 | Endpoint | Returns |
 | --- | --- |
-| `GET /api/v1/portal/audit/events` | Paginated event list. Query params: `from`, `to` (RFC 3339), `tool`, `user`, `session`, `success` (`true`/`false`), `q` (free text), `limit`, `offset`. |
+| `GET /api/v1/portal/audit/events` | Paginated event list. Query params: `from`, `to` (RFC 3339), `tool`, `user`, `session`, `success` (`true`/`false`), `q` (free text), `limit`, `offset`. Plus the JSONB filters in the next section. |
+| `GET /api/v1/portal/audit/events/{id}` | Single event with captured payload (when present). |
+| `GET /api/v1/portal/audit/export` | NDJSON stream of summary rows. Same filter surface as `/events`. Capped at 100,000 rows per request. |
 | `GET /api/v1/portal/audit/timeseries` | Bucketed counts. Query params: `from`, `to`, `bucket` (Go duration like `1m`, `5m`). Returns `[{time, count, errors, avg_duration_ms}]`. |
 | `GET /api/v1/portal/audit/breakdown` | Group-by aggregations. Query param: `by` (one of `tool`, `user`, `success`, `auth_type`). Returns `[{key, count, errors}]`. |
 | `GET /api/v1/portal/dashboard` | The 1-hour summary. |
+
+### JSONB filters
+
+`/events` and `/export` accept JSONB-aware filters that hit the
+`audit_payloads` sibling row. Use them to narrow by parameter values,
+response shape, request headers, or presence of a payload column.
+
+```bash
+# Calls where the request param user.id equals "alice"
+curl -H "X-API-Key: $KEY" \
+  "$BASE/api/v1/portal/audit/events?param.user.id=alice"
+
+# Tool-error responses (response.isError matches JSON true)
+curl -H "X-API-Key: $KEY" \
+  "$BASE/api/v1/portal/audit/events?response.isError=true"
+
+# Match a User-Agent in request headers
+curl -H "X-API-Key: $KEY" \
+  "$BASE/api/v1/portal/audit/events?header.User-Agent=curl/8.0"
+
+# Only events that recorded notifications
+curl -H "X-API-Key: $KEY" \
+  "$BASE/api/v1/portal/audit/events?has=notifications"
+
+# Combine: tool-errors that emitted notifications, last hour
+curl -H "X-API-Key: $KEY" \
+  "$BASE/api/v1/portal/audit/events?response.isError=true&has=notifications&from=$(date -u -v-1H +%FT%TZ)"
+```
+
+Values are type-detected: `true` / `false` become JSON booleans,
+integers and floats become numbers, everything else is a string.
+Force a literal string by quoting: `?param.code="200"` matches the
+JSON string, `?param.code=200` matches the number.
+
+Allowed `has=` columns: `request_params`, `request_headers`,
+`response_result`, `response_error`, `notifications`, `replayed_from`.
+
+### NDJSON export
+
+`/api/v1/portal/audit/export?format=jsonl` streams summary rows as
+newline-delimited JSON. One event per line, ordered as `/events`
+returns them. Use for offline analysis or backups:
+
+```bash
+# All errors from the last 24h, piped through jq
+curl -H "X-API-Key: $KEY" \
+  "$BASE/api/v1/portal/audit/export?success=false&from=$(date -u -v-24H +%FT%TZ)" \
+  | jq -r '.tool_name + "\t" + .error_message'
+```
+
+The export omits the captured `audit_payloads` row from each line; if
+you need the full envelope, follow up with
+`/audit/events/{id}` per event. The endpoint caps at 100,000 rows
+per request; tighten the filter window for larger sets.
+
+`limit` and `offset` behave differently from `/events`:
+`limit` clamps the total exported row count (still bounded by
+the 100,000 hard cap), and `offset` is ignored. Exports always
+start from the head of the matching set; use `from` / `to` to
+window in time instead.
 
 All of these accept either the session cookie (browser) or
 `X-API-Key` / `Authorization: Bearer`.

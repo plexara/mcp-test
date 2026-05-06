@@ -69,6 +69,236 @@ func TestMemoryLogger_QueryFilters(t *testing.T) {
 	}
 }
 
+func TestMemoryLogger_JSONFiltersAndHasKeys(t *testing.T) {
+	m := NewMemoryLogger()
+	now := time.Now().UTC()
+	_ = m.Log(context.Background(), Event{
+		ID: "1", ToolName: "echo", Timestamp: now, Success: true,
+		Payload: &Payload{
+			RequestParams:  map[string]any{"message": "hello", "user": map[string]any{"id": "alice"}},
+			ResponseResult: map[string]any{"isError": false},
+			RequestHeaders: map[string][]string{"User-Agent": {"curl/8.0"}},
+		},
+	})
+	_ = m.Log(context.Background(), Event{
+		ID: "2", ToolName: "echo", Timestamp: now.Add(time.Second), Success: false,
+		Payload: &Payload{
+			RequestParams:  map[string]any{"message": "world", "user": map[string]any{"id": "bob"}},
+			ResponseResult: map[string]any{"isError": true},
+			ResponseError:  map[string]any{"category": "tool", "message": "boom"},
+		},
+	})
+
+	cases := []struct {
+		name   string
+		filter QueryFilter
+		ids    []string // expected event IDs (Query order: ts DESC)
+	}{
+		{
+			"param.user.id=alice",
+			QueryFilter{JSONFilters: []JSONPathFilter{{Source: "param", Path: []string{"user", "id"}, Value: "alice"}}},
+			[]string{"1"},
+		},
+		{
+			"response.isError=true (bool)",
+			QueryFilter{JSONFilters: []JSONPathFilter{{Source: "response", Path: []string{"isError"}, Value: "true"}}},
+			[]string{"2"},
+		},
+		{
+			"header.User-Agent=curl/8.0",
+			QueryFilter{JSONFilters: []JSONPathFilter{{Source: "header", Path: []string{"User-Agent"}, Value: "curl/8.0"}}},
+			[]string{"1"},
+		},
+		{
+			"has=response_error",
+			QueryFilter{HasKeys: []string{"response_error"}},
+			[]string{"2"},
+		},
+		{
+			"AND: param.user.id=alice AND has=request_headers",
+			QueryFilter{
+				JSONFilters: []JSONPathFilter{{Source: "param", Path: []string{"user", "id"}, Value: "alice"}},
+				HasKeys:     []string{"request_headers"},
+			},
+			[]string{"1"},
+		},
+	}
+	for _, c := range cases {
+		evs, err := m.Query(context.Background(), c.filter)
+		if err != nil {
+			t.Errorf("%s: %v", c.name, err)
+			continue
+		}
+		var got []string
+		for _, ev := range evs {
+			got = append(got, ev.ID)
+		}
+		if !equalStringSlice(got, c.ids) {
+			t.Errorf("%s: ids = %v, want %v", c.name, got, c.ids)
+		}
+	}
+}
+
+func TestMemoryLogger_Query_TiedTimestampsAreStable(t *testing.T) {
+	// Tied timestamps must produce a deterministic Query order matching
+	// the Postgres backend (ts DESC, id ASC). Without the id tiebreaker
+	// the two backends could diverge under any ts collision and Stream
+	// pagination consumers would see flaky results.
+	m := NewMemoryLogger()
+	tied := time.Now().UTC()
+	for _, id := range []string{"c", "a", "b"} {
+		_ = m.Log(context.Background(), Event{
+			ID:        id,
+			ToolName:  "echo",
+			Timestamp: tied,
+			Success:   true,
+			Transport: "http",
+			Source:    "mcp",
+		})
+	}
+	got, _ := m.Query(context.Background(), QueryFilter{})
+	if len(got) != 3 {
+		t.Fatalf("len = %d", len(got))
+	}
+	want := []string{"a", "b", "c"}
+	for i, ev := range got {
+		if ev.ID != want[i] {
+			t.Errorf("got[%d] = %q, want %q (full: %v)", i, ev.ID,
+				want[i], []string{got[0].ID, got[1].ID, got[2].ID})
+		}
+	}
+}
+
+func TestMemoryLogger_Query_ClampsAboveMaxQueryLimit(t *testing.T) {
+	// Backend-consistency: MemoryLogger and Postgres must agree on
+	// the upper-bound clamp. Without this clamp, test code that uses
+	// MemoryLogger as a stand-in for Postgres masks production
+	// behavior. Push more than MaxQueryLimit, ask for more; assert
+	// the cap holds.
+	m := NewMemoryLogger()
+	for i := 0; i < MaxQueryLimit+50; i++ {
+		_ = m.Log(context.Background(), Event{
+			ID:        string(rune('a' + (i % 26))),
+			ToolName:  "echo",
+			Timestamp: time.Now().UTC().Add(time.Duration(i) * time.Microsecond),
+			Success:   true,
+			Transport: "http",
+			Source:    "mcp",
+		})
+	}
+	got, _ := m.Query(context.Background(), QueryFilter{Limit: MaxQueryLimit + 9999})
+	if len(got) != MaxQueryLimit {
+		t.Errorf("got %d events with Limit=MaxQueryLimit+9999, want %d (clamp must enforce upper bound)",
+			len(got), MaxQueryLimit)
+	}
+}
+
+func TestMemoryLogger_CountAndStream_NotCappedAtQueryDefault(t *testing.T) {
+	// Regression: an earlier fix made Query default Limit=0 to 100. If
+	// Count or Stream route through Query (instead of using matchAll
+	// directly), they silently truncate at 100. Write more than 100
+	// events and verify both methods see all of them.
+	m := NewMemoryLogger()
+	const n = 250
+	now := time.Now().UTC()
+	for i := 0; i < n; i++ {
+		_ = m.Log(context.Background(), Event{
+			ID:        string(rune('a' + (i % 26))),
+			ToolName:  "echo",
+			Timestamp: now.Add(time.Duration(i) * time.Microsecond),
+			Success:   true,
+			Transport: "http",
+			Source:    "mcp",
+		})
+	}
+
+	got, err := m.Count(context.Background(), QueryFilter{})
+	if err != nil {
+		t.Fatalf("Count: %v", err)
+	}
+	if got != n {
+		t.Errorf("Count = %d, want %d (must not be capped at Query default)", got, n)
+	}
+
+	streamSeen := 0
+	if err := m.Stream(context.Background(), QueryFilter{}, func(Event) error {
+		streamSeen++
+		return nil
+	}); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	if streamSeen != n {
+		t.Errorf("Stream visited %d events, want %d (must not be capped at Query default)", streamSeen, n)
+	}
+}
+
+func TestMemoryLogger_Stream_IgnoresLimit(t *testing.T) {
+	// Per the StreamingLogger contract, f.Limit is ignored: Stream
+	// iterates the whole filtered set so callers can stop via a sentinel
+	// from fn. A regression that forwards Limit to Query would silently
+	// truncate exports.
+	m := NewMemoryLogger()
+	now := time.Now().UTC()
+	for i := 0; i < 5; i++ {
+		_ = m.Log(context.Background(), Event{
+			ID:        string(rune('a' + i)),
+			Timestamp: now.Add(time.Duration(i) * time.Second),
+			ToolName:  "echo",
+			Success:   true,
+			Transport: "http",
+			Source:    "mcp",
+		})
+	}
+	count := 0
+	if err := m.Stream(context.Background(), QueryFilter{Limit: 2}, func(Event) error {
+		count++
+		return nil
+	}); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	if count != 5 {
+		t.Errorf("count = %d, want 5 (Limit must be ignored)", count)
+	}
+}
+
+func TestMemoryLogger_Stream(t *testing.T) {
+	m := NewMemoryLogger()
+	now := time.Now().UTC()
+	for i := 0; i < 5; i++ {
+		_ = m.Log(context.Background(), Event{
+			ID:        string(rune('a' + i)),
+			ToolName:  "echo",
+			Timestamp: now.Add(time.Duration(i) * time.Second),
+			Success:   true,
+			Transport: "http",
+			Source:    "mcp",
+		})
+	}
+	var seen []string
+	if err := m.Stream(context.Background(), QueryFilter{}, func(ev Event) error {
+		seen = append(seen, ev.ID)
+		return nil
+	}); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	// Stream returns Query order (DESC by ts), so newest first.
+	if len(seen) != 5 || seen[0] != "e" || seen[4] != "a" {
+		t.Errorf("seen = %v, want [e d c b a]", seen)
+	}
+}
+
+func equalStringSlice(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func TestMemoryLogger_TimeSeries(t *testing.T) {
 	m := NewMemoryLogger()
 	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)

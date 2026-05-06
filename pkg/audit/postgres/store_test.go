@@ -12,6 +12,7 @@ package auditpg_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -168,6 +169,308 @@ func TestStore_Log_NilPayloadOnlyWritesSummary(t *testing.T) {
 	if n != 1 {
 		t.Errorf("summary row count = %d, want 1", n)
 	}
+}
+
+func TestStore_JSONFilters_AndHasKeys(t *testing.T) {
+	// End-to-end: write events with diverse payloads, then assert the
+	// JSONB filter compiler matches the same events the MemoryLogger
+	// would. Hits the real GIN(jsonb_path_ops) index path.
+	ctx := context.Background()
+	url := startPostgres(ctx, t)
+	if err := migrate.Up(url); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	pool, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatalf("pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	store := auditpg.New(pool)
+
+	now := time.Now().UTC()
+	mustLog := func(id string, p *audit.Payload, success bool) {
+		t.Helper()
+		ev := audit.Event{
+			ID:        id,
+			Timestamp: now,
+			ToolName:  "echo",
+			Transport: "http",
+			Source:    "mcp",
+			Success:   success,
+			Payload:   p,
+		}
+		if err := store.Log(ctx, ev); err != nil {
+			t.Fatalf("Log %s: %v", id, err)
+		}
+	}
+	mustLog("alice", &audit.Payload{
+		JSONRPCMethod:  "tools/call",
+		RequestParams:  map[string]any{"message": "hello", "user": map[string]any{"id": "alice"}},
+		ResponseResult: map[string]any{"isError": false, "content": []any{map[string]any{"type": "text", "text": "hi"}}},
+		RequestHeaders: map[string][]string{"User-Agent": {"curl/8.0"}},
+	}, true)
+	mustLog("bob", &audit.Payload{
+		JSONRPCMethod:  "tools/call",
+		RequestParams:  map[string]any{"message": "world", "user": map[string]any{"id": "bob"}},
+		ResponseResult: map[string]any{"isError": true},
+		ResponseError:  map[string]any{"category": "tool", "message": "boom"},
+	}, false)
+	mustLog("carol-no-payload", nil, true)
+
+	cases := []struct {
+		name   string
+		filter audit.QueryFilter
+		ids    []string
+	}{
+		{
+			"param.user.id=alice",
+			audit.QueryFilter{JSONFilters: []audit.JSONPathFilter{
+				{Source: "param", Path: []string{"user", "id"}, Value: "alice"},
+			}},
+			[]string{"alice"},
+		},
+		{
+			"response.isError=true",
+			audit.QueryFilter{JSONFilters: []audit.JSONPathFilter{
+				{Source: "response", Path: []string{"isError"}, Value: "true"},
+			}},
+			[]string{"bob"},
+		},
+		{
+			"header.User-Agent=curl/8.0",
+			audit.QueryFilter{JSONFilters: []audit.JSONPathFilter{
+				{Source: "header", Path: []string{"User-Agent"}, Value: "curl/8.0"},
+			}},
+			[]string{"alice"},
+		},
+		{
+			"has=response_error",
+			audit.QueryFilter{HasKeys: []string{"response_error"}},
+			[]string{"bob"},
+		},
+		{
+			"has=request_headers",
+			audit.QueryFilter{HasKeys: []string{"request_headers"}},
+			[]string{"alice"},
+		},
+		{
+			"AND: param.user.id=alice + has=request_headers",
+			audit.QueryFilter{
+				JSONFilters: []audit.JSONPathFilter{{Source: "param", Path: []string{"user", "id"}, Value: "alice"}},
+				HasKeys:     []string{"request_headers"},
+			},
+			[]string{"alice"},
+		},
+		{
+			"no-match path",
+			audit.QueryFilter{JSONFilters: []audit.JSONPathFilter{
+				{Source: "param", Path: []string{"user", "id"}, Value: "nobody"},
+			}},
+			nil,
+		},
+	}
+	for _, c := range cases {
+		evs, err := store.Query(ctx, c.filter)
+		if err != nil {
+			t.Errorf("%s: Query err: %v", c.name, err)
+			continue
+		}
+		var ids []string
+		for _, ev := range evs {
+			ids = append(ids, ev.ID)
+		}
+		if !equalStringsAny(ids, c.ids) {
+			t.Errorf("%s: ids = %v, want %v", c.name, ids, c.ids)
+		}
+	}
+}
+
+func TestStore_Query_LimitClamping(t *testing.T) {
+	// buildSelect has two branches for Limit:
+	//   - Limit <= 0: default to 100
+	//   - Limit > MaxQueryLimit: clamp to MaxQueryLimit
+	// Verify both, plus a passing-through case in the middle, against
+	// real Postgres so a regression that collapses the branches surfaces.
+	ctx := context.Background()
+	url := startPostgres(ctx, t)
+	if err := migrate.Up(url); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	pool, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatalf("pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	store := auditpg.New(pool)
+
+	// Need MaxQueryLimit + 50 events to exercise the clamp.
+	const stored = audit.MaxQueryLimit + 50
+	now := time.Now().UTC()
+	for i := 0; i < stored; i++ {
+		ev := audit.Event{
+			ID:        fmt.Sprintf("evt-%05d", i),
+			Timestamp: now.Add(time.Duration(i) * time.Millisecond),
+			ToolName:  "echo",
+			Transport: "http",
+			Source:    "mcp",
+			Success:   true,
+		}
+		if err := store.Log(ctx, ev); err != nil {
+			t.Fatalf("Log: %v", err)
+		}
+	}
+
+	cases := []struct {
+		name  string
+		limit int
+		want  int
+	}{
+		{"unset (Limit=0) defaults to 100", 0, 100},
+		{"explicit small Limit honored", 25, 25},
+		{"Limit at MaxQueryLimit honored", audit.MaxQueryLimit, audit.MaxQueryLimit},
+		{"Limit above MaxQueryLimit clamped", audit.MaxQueryLimit + 9999, audit.MaxQueryLimit},
+	}
+	for _, c := range cases {
+		got, err := store.Query(ctx, audit.QueryFilter{Limit: c.limit})
+		if err != nil {
+			t.Errorf("%s: %v", c.name, err)
+			continue
+		}
+		if len(got) != c.want {
+			t.Errorf("%s: got %d, want %d", c.name, len(got), c.want)
+		}
+	}
+}
+
+func TestStore_Stream_TiedTimestampsNoDuplicatesOrSkips(t *testing.T) {
+	// Tied timestamps + OFFSET pagination is the worst case: without an
+	// id tiebreaker on ORDER BY, the same row can appear in two
+	// consecutive pages and a different row can be skipped entirely.
+	// Write 1100 events all sharing one ts, then assert Stream visits
+	// each id exactly once.
+	ctx := context.Background()
+	url := startPostgres(ctx, t)
+	if err := migrate.Up(url); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	pool, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatalf("pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	store := auditpg.New(pool)
+
+	const n = 1100
+	tied := time.Now().UTC().Truncate(time.Second)
+	for i := 0; i < n; i++ {
+		ev := audit.Event{
+			ID:        fmt.Sprintf("evt-%04d", i),
+			Timestamp: tied,
+			ToolName:  "echo",
+			Transport: "http",
+			Source:    "mcp",
+			Success:   true,
+		}
+		if err := store.Log(ctx, ev); err != nil {
+			t.Fatalf("Log %d: %v", i, err)
+		}
+	}
+
+	seen := make(map[string]int, n)
+	if err := store.Stream(ctx, audit.QueryFilter{}, func(ev audit.Event) error {
+		seen[ev.ID]++
+		return nil
+	}); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	if len(seen) != n {
+		t.Fatalf("distinct ids visited = %d, want %d", len(seen), n)
+	}
+	for id, c := range seen {
+		if c != 1 {
+			t.Errorf("id %s seen %d times, want 1 (duplicate at page boundary)", id, c)
+		}
+	}
+}
+
+func TestStore_Stream_PagesThroughCursor(t *testing.T) {
+	ctx := context.Background()
+	url := startPostgres(ctx, t)
+	if err := migrate.Up(url); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	pool, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatalf("pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	store := auditpg.New(pool)
+
+	// Write enough events to span multiple internal pages. The Stream
+	// implementation pages at 1000 rows; we go just past that to prove
+	// the page-loop pagination works end-to-end.
+	const n = 1100
+	now := time.Now().UTC()
+	for i := 0; i < n; i++ {
+		ev := audit.Event{
+			ID:        fmt.Sprintf("evt-%04d", i),
+			Timestamp: now.Add(time.Duration(i) * time.Millisecond),
+			ToolName:  "echo",
+			Transport: "http",
+			Source:    "mcp",
+			Success:   true,
+		}
+		if err := store.Log(ctx, ev); err != nil {
+			t.Fatalf("Log: %v", err)
+		}
+	}
+
+	seen := 0
+	if err := store.Stream(ctx, audit.QueryFilter{}, func(audit.Event) error {
+		seen++
+		return nil
+	}); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	if seen != n {
+		t.Errorf("Stream visited %d events, want %d", seen, n)
+	}
+
+	// Per StreamingLogger contract, f.Offset is ignored: Stream walks
+	// the whole filtered set even if the caller passes a non-zero
+	// Offset. Without this assertion, a regression that drops the
+	// page.Offset = 0 line would silently truncate exports.
+	seenWithOffset := 0
+	if err := store.Stream(ctx, audit.QueryFilter{Offset: 500}, func(audit.Event) error {
+		seenWithOffset++
+		return nil
+	}); err != nil {
+		t.Fatalf("Stream with Offset=500: %v", err)
+	}
+	if seenWithOffset != n {
+		t.Errorf("Stream with Offset=500 visited %d, want %d (Offset must be ignored)", seenWithOffset, n)
+	}
+}
+
+func equalStringsAny(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	// Postgres ORDER BY ts DESC + same ts: ordering inside a tie is
+	// undefined. Compare as sets for these small fixtures.
+	am := map[string]int{}
+	for _, s := range a {
+		am[s]++
+	}
+	for _, s := range b {
+		am[s]--
+	}
+	for _, v := range am {
+		if v != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func TestStore_GetPayload_NotFound(t *testing.T) {
