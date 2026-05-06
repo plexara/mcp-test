@@ -226,4 +226,42 @@ func TestAllowList_FunctionAndSliceAgree(t *testing.T) {
 			t.Errorf("IsAllowedJSONSource(%q) = true, want false", s)
 		}
 	}
+
+	// AllowedHasKeysList / AllowedJSONSourcesList must mirror the
+	// underlying slices exactly and must return a fresh clone each call
+	// (a downstream caller mutating the returned slice must not affect
+	// the next caller).
+	if got := AllowedHasKeysList(); len(got) != len(AllowedHasKeys) {
+		t.Fatalf("AllowedHasKeysList len = %d, want %d", len(got), len(AllowedHasKeys))
+	}
+	for i, k := range AllowedHasKeysList() {
+		if k != AllowedHasKeys[i] {
+			t.Errorf("AllowedHasKeysList[%d] = %q, want %q (drift vs AllowedHasKeys)", i, k, AllowedHasKeys[i])
+		}
+	}
+	first := AllowedHasKeysList()
+	first[0] = "MUTATED"
+	if AllowedHasKeysList()[0] == "MUTATED" {
+		t.Error("AllowedHasKeysList() returned a shared slice; mutation leaked across callers")
+	}
+	if AllowedHasKeys[0] == "MUTATED" {
+		t.Error("AllowedHasKeysList() returned the package var directly; mutation leaked into AllowedHasKeys")
+	}
+
+	if got := AllowedJSONSourcesList(); len(got) != len(AllowedJSONSources) {
+		t.Fatalf("AllowedJSONSourcesList len = %d, want %d", len(got), len(AllowedJSONSources))
+	}
+	for i, s := range AllowedJSONSourcesList() {
+		if s != AllowedJSONSources[i] {
+			t.Errorf("AllowedJSONSourcesList[%d] = %q, want %q", i, s, AllowedJSONSources[i])
+		}
+	}
+	firstSrc := AllowedJSONSourcesList()
+	firstSrc[0] = "MUTATED"
+	if AllowedJSONSourcesList()[0] == "MUTATED" {
+		t.Error("AllowedJSONSourcesList() returned a shared slice; mutation leaked across callers")
+	}
+	if AllowedJSONSources[0] == "MUTATED" {
+		t.Error("AllowedJSONSourcesList() returned the package var directly; mutation leaked into AllowedJSONSources")
+	}
 }

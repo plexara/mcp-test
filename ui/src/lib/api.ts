@@ -129,6 +129,46 @@ export type AuditEvent = {
   content_blocks?: number;
   transport: string;
   source: string;
+  remote_addr?: string;
+  user_agent?: string;
+  payload?: AuditPayload;
+};
+
+export type AuditNotification = {
+  ts: string;
+  method: string;
+  params?: Record<string, unknown>;
+};
+
+export type AuditPayload = {
+  jsonrpc_method?: string;
+  request_params?: Record<string, unknown>;
+  request_size_bytes?: number;
+  request_truncated?: boolean;
+  request_headers?: Record<string, string[]>;
+  request_remote_addr?: string;
+  response_result?: Record<string, unknown>;
+  response_error?: Record<string, unknown>;
+  response_size_bytes?: number;
+  response_truncated?: boolean;
+  notifications?: AuditNotification[];
+  notifications_truncated?: boolean;
+  replayed_from?: string;
+};
+
+export type ReplayResponse = {
+  replay_event_id: string;
+  replayed_from: string;
+  result: unknown;
+  success: boolean;
+  error?: string;
+};
+
+export type AuditMeta = {
+  has_keys: string[];
+  json_sources: string[];
+  replay: { burst: number; refill_secs: number; sustained_min: number };
+  export: { max_rows: number };
 };
 
 export type DashboardResponse = {
@@ -163,10 +203,104 @@ export const portalAPI = {
   instructions: () => api.get<{ instructions: string }>("/api/v1/portal/instructions"),
   tools:     () => api.get<{ tools: ToolMeta[] }>("/api/v1/portal/tools"),
   toolDetail: (name: string) => api.get<ToolMeta>(`/api/v1/portal/tools/${encodeURIComponent(name)}`),
+  auditMeta: () => api.get<AuditMeta>("/api/v1/portal/audit/meta"),
   audit:     (qs: string) => api.get<{ events: AuditEvent[]; total: number; limit: number; offset: number }>(`/api/v1/portal/audit/events${qs ? "?" + qs : ""}`),
+  auditEvent: (id: string) => api.get<AuditEvent>(`/api/v1/portal/audit/events/${encodeURIComponent(id)}`),
+  auditReplay: (id: string) => api.post<ReplayResponse>(`/api/v1/portal/audit/events/${encodeURIComponent(id)}/replay`, {}),
   dashboard: () => api.get<DashboardResponse>("/api/v1/portal/dashboard"),
   wellknown: () => api.get<{ protected_resource_url: string; authorization_server: string; oidc_enabled: boolean; audience: string; mcp_endpoint: string }>("/api/v1/portal/wellknown"),
 };
+
+// streamAuditEvents opens a fetch-based SSE connection to the live tail
+// endpoint and invokes onEvent per `event: audit` frame. Returns an
+// unsubscribe function that aborts the request.
+//
+// Uses fetch + ReadableStream rather than EventSource because EventSource
+// can't send custom headers (X-API-Key); cookie-only auth would lock out
+// CLI / API-key callers. SSE comments (": connected", ": keepalive") are
+// silently skipped.
+export function streamAuditEvents(
+  onEvent: (ev: AuditEvent) => void,
+  onError?: (err: Error) => void,
+): () => void {
+  const ctrl = new AbortController();
+  void (async () => {
+    try {
+      const headers = new Headers();
+      const key = getApiKey();
+      if (key) headers.set("X-API-Key", key);
+      headers.set("Accept", "text/event-stream");
+      const resp = await fetch("/api/v1/portal/audit/stream", {
+        credentials: "include",
+        headers,
+        signal: ctrl.signal,
+      });
+      if (resp.status === 401) {
+        // Auth handler will redirect to /login; suppress the per-stream
+        // error callback so a flash banner doesn't precede the redirect.
+        clearApiKey();
+        onUnauthorized?.();
+        return;
+      }
+      if (!resp.ok || !resp.body) {
+        throw new HttpError(resp.status, `stream open failed: HTTP ${resp.status}${resp.statusText ? " " + resp.statusText : ""}`);
+      }
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      // Cap the line buffer so a misbehaving producer that never emits
+      // a newline can't grow it without bound and OOM the tab.
+      const maxBuf = 1 << 20; // 1 MiB
+      let buf = "";
+      let event = "";
+      let data = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          // The server closed the stream (heartbeat write failure, idle
+          // timeout, or shutdown). Surface so the UI can re-enable the tail.
+          throw new Error("stream closed by server");
+        }
+        buf += decoder.decode(value, { stream: true });
+        if (buf.length > maxBuf) {
+          throw new Error("stream buffer overflow (no newline within 1 MiB)");
+        }
+        let nl: number;
+        while ((nl = buf.indexOf("\n")) >= 0) {
+          const raw = buf.slice(0, nl);
+          buf = buf.slice(nl + 1);
+          const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
+          if (line === "") {
+            if (event === "audit" && data) {
+              try {
+                const parsed = JSON.parse(data) as AuditEvent;
+                if (parsed && typeof parsed.id === "string" && parsed.id) {
+                  onEvent(parsed);
+                }
+              } catch {
+                // Malformed event payload — skip and keep reading.
+              }
+            }
+            event = "";
+            data = "";
+            continue;
+          }
+          if (line.startsWith(":")) continue; // SSE comment
+          if (line.startsWith("event:")) {
+            event = line.slice(6).replace(/^ /, "");
+          } else if (line.startsWith("data:")) {
+            // SSE: strip exactly one optional leading space; preserve any other whitespace.
+            const fragment = line.slice(5).replace(/^ /, "");
+            data = data ? data + "\n" + fragment : fragment;
+          }
+        }
+      }
+    } catch (err) {
+      if ((err as Error).name === "AbortError") return;
+      onError?.(err as Error);
+    }
+  })();
+  return () => ctrl.abort();
+}
 
 export const adminAPI = {
   listKeys:   () => api.get<{ keys: Key[] }>("/api/v1/admin/keys"),

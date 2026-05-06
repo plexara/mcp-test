@@ -1,5 +1,18 @@
 import { create } from "zustand";
 import { portalAPI, clearApiKey, setUnauthorizedHandler, type Identity } from "@/lib/api";
+import { COMPARE_KEY } from "@/lib/storage-keys";
+
+// clearSessionScopedState wipes any portal state that should not survive
+// a sign-out on a shared workstation: the audit-compare stash currently,
+// any future per-user UI state added here. API keys and zustand state
+// are reset by the caller; this is the localStorage piece.
+function clearSessionScopedState() {
+  try {
+    localStorage.removeItem(COMPARE_KEY);
+  } catch {
+    /* localStorage unavailable (incognito quota / disabled) — ignore */
+  }
+}
 
 type Status = "idle" | "loading" | "authenticated" | "anonymous";
 
@@ -24,6 +37,7 @@ export const useAuth = create<AuthState>((set) => ({
   },
   signOut: async () => {
     clearApiKey();
+    clearSessionScopedState();
     try {
       // CSRF: the request() wrapper sends X-Requested-With automatically
       // when called via api.post; here we hit the auth endpoint directly
@@ -43,6 +57,7 @@ export const useAuth = create<AuthState>((set) => ({
 // hitting an expired session immediately drops the SPA back to login.
 setUnauthorizedHandler(() => {
   clearApiKey();
+  clearSessionScopedState();
   useAuth.setState({ identity: null, status: "anonymous" });
   if (typeof window !== "undefined" && !window.location.pathname.endsWith("/login")) {
     window.location.href = "/portal/login";

@@ -45,7 +45,7 @@ export default function Dashboard() {
               </tr>
             </thead>
             <tbody>
-              {d.recent.map((e) => (
+              {(d.recent ?? []).map((e) => (
                 <tr key={e.id} className="border-t border-border">
                   <td className="px-3 py-1.5 text-muted-foreground mono">{new Date(e.timestamp).toLocaleTimeString()}</td>
                   <td className="px-3 py-1.5">{e.tool_name}</td>

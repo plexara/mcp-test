@@ -268,7 +268,10 @@ func (s *Store) Query(ctx context.Context, f audit.QueryFilter) ([]audit.Event, 
 	}
 	defer rows.Close()
 
-	var out []audit.Event
+	// Initialize as an empty slice (not nil) so JSON callers always
+	// see [] rather than null when the result set is empty. The portal
+	// SPA does `events.map(...)` unconditionally; null would crash it.
+	out := []audit.Event{}
 	for rows.Next() {
 		ev, err := scanEvent(rows)
 		if err != nil {
@@ -386,7 +389,8 @@ func (s *Store) TimeSeries(ctx context.Context, from, to time.Time, bucket time.
 		return nil, err
 	}
 	defer rows.Close()
-	var out []audit.TimePoint
+	// Empty slice (not nil) so JSON callers always see []; see Query.
+	out := []audit.TimePoint{}
 	for rows.Next() {
 		var p audit.TimePoint
 		if err := rows.Scan(&p.Time, &p.Count, &p.Errors, &p.AvgDurMS); err != nil {
@@ -401,7 +405,9 @@ func (s *Store) TimeSeries(ctx context.Context, from, to time.Time, bucket time.
 func (s *Store) Breakdown(ctx context.Context, from, to time.Time, dimension string) ([]audit.BreakdownPoint, error) {
 	col := breakdownColumn(dimension)
 	if col == "" {
-		return nil, nil
+		// Unknown dimension — return an empty slice rather than nil so
+		// the JSON encoder emits [] not null.
+		return []audit.BreakdownPoint{}, nil
 	}
 	q := fmt.Sprintf(`
 		SELECT COALESCE(%s::text, '') AS k,
@@ -419,7 +425,8 @@ func (s *Store) Breakdown(ctx context.Context, from, to time.Time, dimension str
 		return nil, err
 	}
 	defer rows.Close()
-	var out []audit.BreakdownPoint
+	// Empty slice (not nil) so JSON callers always see []; see Query.
+	out := []audit.BreakdownPoint{}
 	for rows.Next() {
 		var p audit.BreakdownPoint
 		if err := rows.Scan(&p.Key, &p.Count, &p.Errors); err != nil {

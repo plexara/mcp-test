@@ -134,12 +134,27 @@ func numericEq(a float64, b any) bool {
 	return false
 }
 
+// AllowedHasKeysList returns a fresh clone of AllowedHasKeys for callers
+// that need to surface the list (e.g. a portal /audit/meta endpoint).
+// Cloning ensures a downstream caller cannot mutate the package-level
+// var. The actual gate at parse time stays the closed-switch
+// IsAllowedHasKey; this helper, the exported var, and the switch must
+// stay synchronized — TestAllowList_FunctionAndSliceAgree enforces it.
+func AllowedHasKeysList() []string {
+	return append([]string(nil), AllowedHasKeys...)
+}
+
+// AllowedJSONSourcesList returns a fresh clone of AllowedJSONSources.
+// Same contract as AllowedHasKeysList.
+func AllowedJSONSourcesList() []string {
+	return append([]string(nil), AllowedJSONSources...)
+}
+
 // IsAllowedHasKey reports whether key is an allowlisted has= column.
 // Implemented as a closed switch (not a slice iteration) so the
-// AllowedHasKeys exported var cannot be mutated by an importing package
-// to widen what gets spliced into the verbatim SQL column reference in
-// buildSelect. The slice stays exported for documentation generators
-// and reflection callers; the gate is the function.
+// internal allowlist cannot be mutated by an importing package to widen
+// what gets spliced into the verbatim SQL column reference in
+// buildSelect.
 func IsAllowedHasKey(key string) bool {
 	switch key {
 	case "request_params",
