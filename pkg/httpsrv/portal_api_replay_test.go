@@ -290,6 +290,58 @@ func TestPortalAPI_AuditReplay_RateLimit(t *testing.T) {
 	}
 }
 
+// TestPortalAPI_AuditReplay_FailedValidationDoesNotConsumeToken verifies
+// that 4xx pre-validation failures (no captured payload, redacted params,
+// missing tool) don't burn the per-identity rate-limit budget. Operators
+// clicking Replay on summary-only rows shouldn't lose their replay quota
+// for an hour.
+func TestPortalAPI_AuditReplay_FailedValidationDoesNotConsumeToken(t *testing.T) {
+	mux, mem := portalReplayMux(t, nil)
+
+	// Stage replayBurst+1 events that will all fail validation
+	// (no captured RequestParams). Then a final replayable event.
+	noPayloadIDs := make([]string, 0, replayBurst+1)
+	for i := 0; i < replayBurst+1; i++ {
+		ev := audit.Event{
+			Timestamp: time.Now(),
+			ToolName:  "whoami", // distinct from stagedEvent's "echo" so the
+			Success:   true,     // helper's tool-name lookup doesn't pick these.
+			Payload:   nil,      // nothing captured -> 400 from auditReplay
+		}
+		_ = mem.Log(context.Background(), ev)
+		// MemoryLogger.Log assigns an id when none is set; read it
+		// back from the snapshot so we can target the new row.
+		snap := mem.Snapshot()
+		noPayloadIDs = append(noPayloadIDs, snap[len(snap)-1].ID)
+	}
+	good := stagedEvent(t, mem, map[string]any{"message": "ok"})
+
+	// Each no-payload click returns 400 — must NOT consume a token.
+	for _, id := range noPayloadIDs {
+		body := bytes.NewReader([]byte(`{}`))
+		req := httptest.NewRequest(http.MethodPost,
+			"/api/v1/portal/audit/events/"+id+"/replay", body)
+		req.Header.Set("X-Requested-With", "XMLHttpRequest")
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("no-payload replay status = %d, want 400", w.Code)
+		}
+	}
+
+	// After replayBurst+1 failed clicks, the burst budget must still be
+	// untouched: the next valid replay must succeed (not 429).
+	body := bytes.NewReader([]byte(`{}`))
+	req := httptest.NewRequest(http.MethodPost,
+		"/api/v1/portal/audit/events/"+good+"/replay", body)
+	req.Header.Set("X-Requested-With", "XMLHttpRequest")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("post-failures replay status = %d, want 200 (failed validations should not have burned tokens)", w.Code)
+	}
+}
+
 func TestCallToolResultToMap_ContentTypes(t *testing.T) {
 	cases := []struct {
 		name string

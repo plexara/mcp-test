@@ -164,6 +164,13 @@ export type ReplayResponse = {
   error?: string;
 };
 
+export type AuditMeta = {
+  has_keys: string[];
+  json_sources: string[];
+  replay: { burst: number; refill_secs: number; sustained_min: number };
+  export: { max_rows: number };
+};
+
 export type DashboardResponse = {
   window_from: string;
   window_to: string;
@@ -196,6 +203,7 @@ export const portalAPI = {
   instructions: () => api.get<{ instructions: string }>("/api/v1/portal/instructions"),
   tools:     () => api.get<{ tools: ToolMeta[] }>("/api/v1/portal/tools"),
   toolDetail: (name: string) => api.get<ToolMeta>(`/api/v1/portal/tools/${encodeURIComponent(name)}`),
+  auditMeta: () => api.get<AuditMeta>("/api/v1/portal/audit/meta"),
   audit:     (qs: string) => api.get<{ events: AuditEvent[]; total: number; limit: number; offset: number }>(`/api/v1/portal/audit/events${qs ? "?" + qs : ""}`),
   auditEvent: (id: string) => api.get<AuditEvent>(`/api/v1/portal/audit/events/${encodeURIComponent(id)}`),
   auditReplay: (id: string) => api.post<ReplayResponse>(`/api/v1/portal/audit/events/${encodeURIComponent(id)}/replay`, {}),

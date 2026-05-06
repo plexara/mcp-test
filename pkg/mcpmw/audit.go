@@ -185,9 +185,10 @@ func Audit(chain *auth.Chain, logger audit.Logger, redactKeys []string, toolGrou
 //
 // Each side (request, response) is size-bounded; oversize JSON content
 // is dropped wholesale and the matching truncated flag is set. Headers
-// are reflected exactly as ctx already carries them (the audit
-// middleware clones + redacts them in enrichContext via the caller's
-// HeaderCapture middleware).
+// are reflected exactly as ctx already carries them; auth.WithHeaders
+// redacts credential-bearing names (Authorization / Cookie / X-API-Key
+// / Proxy-Authorization / Set-Cookie) at stash time so the bytes never
+// reach this row.
 func buildPayload(
 	ctx context.Context,
 	method string,
@@ -215,10 +216,9 @@ func buildPayload(
 		p.RequestSizeBytes = size
 	}
 
-	// Headers: only when the operator opted in. enrichContext already
-	// cloned the inbound header set; HeaderCapture (HTTP layer) is
-	// responsible for stripping Authorization / Cookie before they
-	// reach ctx.
+	// Headers: only when the operator opted in. enrichContext stashed
+	// them via auth.WithHeaders, which already redacted credential-
+	// bearing names; the values here are safe to land in audit_payloads.
 	if opts.captureHeaders {
 		if h := auth.GetHeaders(ctx); h != nil {
 			p.RequestHeaders = map[string][]string(h)

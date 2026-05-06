@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { X, Play, GitCompare, AlertCircle, CheckCircle2 } from "lucide-react";
+import { X, Play, GitCompare, AlertCircle, CheckCircle2, Loader2 } from "lucide-react";
 import { portalAPI, type AuditEvent, type ReplayResponse, HttpError } from "@/lib/api";
 import { JsonView } from "./JsonView";
+import { hasRedactedValue, ConfirmModal } from "./ConfirmModal";
 
 type Tab = "overview" | "request" | "response" | "notifications";
 
@@ -23,7 +24,10 @@ export function EventDrawer({
   onCompareSelect: (id: string) => void;
 }) {
   const [tab, setTab] = useState<Tab>("overview");
+  const [confirmReplay, setConfirmReplay] = useState(false);
   const qc = useQueryClient();
+  const closeBtnRef = useRef<HTMLButtonElement>(null);
+  const restoreFocusRef = useRef<HTMLElement | null>(null);
 
   // ESC closes.
   useEffect(() => {
@@ -40,14 +44,33 @@ export function EventDrawer({
     if (eventId) setTab("overview");
   }, [eventId]);
 
+  // Save the previously-focused element on open and restore it on close.
+  // Auto-focus the close button so keyboard users can dismiss with Enter.
+  useEffect(() => {
+    if (!eventId) return;
+    restoreFocusRef.current = document.activeElement as HTMLElement | null;
+    closeBtnRef.current?.focus();
+    return () => {
+      restoreFocusRef.current?.focus?.();
+      restoreFocusRef.current = null;
+    };
+  }, [eventId]);
+
   const detail = useQuery<AuditEvent, HttpError>({
     queryKey: ["audit-event", eventId],
     queryFn: () => portalAPI.auditEvent(eventId!),
     enabled: !!eventId,
   });
 
-  const replay = useMutation<ReplayResponse, HttpError, void>({
-    mutationFn: () => portalAPI.auditReplay(eventId!),
+  // The mutation takes the event id as a variable (rather than closing
+  // over the outer `eventId`) so we can: (a) tell at render time which
+  // event the in-flight replay was fired for via `replay.variables`,
+  // and (b) suppress the banner when the user has navigated to a
+  // different drawer mid-flight. Without the variable, a replay fired
+  // on event A would resolve into the open drawer for event B and
+  // mislead the operator into thinking they replayed B.
+  const replay = useMutation<ReplayResponse, HttpError, string>({
+    mutationFn: (id: string) => portalAPI.auditReplay(id),
     onSuccess: () => {
       // Refresh the events list so the new replay row appears.
       void qc.invalidateQueries({ queryKey: ["audit"] });
@@ -55,15 +78,27 @@ export function EventDrawer({
   });
 
   // Reset replay state on event change so a banner from a prior replay
-  // doesn't bleed into a different drawer.
+  // doesn't bleed into a different drawer. Skip the reset while a replay
+  // is in flight so we don't clobber an isPending state and mislead the
+  // user into thinking nothing's running.
   useEffect(() => {
-    replay.reset();
+    if (!replay.isPending) replay.reset();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eventId]);
 
   if (!eventId) return null;
 
   const ev = detail.data;
+  // Replay is impossible when the original payload wasn't captured or
+  // any param was redacted; mirror the server-side validation client-
+  // side so a click doesn't even attempt the request (and so the
+  // disabled button telegraphs "this row can't be replayed").
+  const replayBlockReason = (() => {
+    if (!ev) return "Loading event detail...";
+    if (!ev.payload?.request_params) return "No captured request payload to replay.";
+    if (hasRedactedValue(ev.payload.request_params)) return "Captured params contain redacted values; replay would not exercise the same call.";
+    return null;
+  })();
 
   return (
     <>
@@ -83,13 +118,17 @@ export function EventDrawer({
         <header className="flex items-center justify-between gap-3 px-4 py-3 border-b border-border">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              {ev?.success === false ? (
+              {detail.isLoading ? (
+                <Loader2 className="size-4 text-muted-foreground shrink-0 animate-spin" />
+              ) : detail.isError ? (
+                <AlertCircle className="size-4 text-destructive shrink-0" />
+              ) : ev?.success === false ? (
                 <AlertCircle className="size-4 text-destructive shrink-0" />
               ) : (
                 <CheckCircle2 className="size-4 text-success shrink-0" />
               )}
               <h2 className="text-base font-semibold truncate">
-                {ev?.tool_name ?? "Loading..."}
+                {detail.isError ? "Failed to load event" : ev?.tool_name ?? "Loading..."}
               </h2>
               {ev?.source && (
                 <span className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
@@ -110,14 +149,15 @@ export function EventDrawer({
               <GitCompare className="size-3.5" /> Compare
             </button>
             <button
-              onClick={() => replay.mutate()}
-              disabled={replay.isPending}
-              className="text-xs px-2 py-1 rounded border border-border hover:bg-muted disabled:opacity-50 flex items-center gap-1"
-              title="Re-invoke this captured tool call"
+              onClick={() => setConfirmReplay(true)}
+              disabled={replay.isPending || !!replayBlockReason}
+              className="text-xs px-2 py-1 rounded border border-border hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+              title={replayBlockReason ?? "Re-invoke this captured tool call"}
             >
               <Play className="size-3.5" /> {replay.isPending ? "Replaying..." : "Replay"}
             </button>
             <button
+              ref={closeBtnRef}
               onClick={onClose}
               className="p-1 text-muted-foreground hover:text-foreground"
               aria-label="Close"
@@ -127,7 +167,42 @@ export function EventDrawer({
           </div>
         </header>
 
-        <ReplayBanner replay={replay} />
+        <ConfirmModal
+          open={confirmReplay}
+          title="Re-invoke this tool call?"
+          message={
+            <>
+              <p>
+                Replay re-runs the captured request through the live MCP server with the
+                <strong> same arguments</strong>. Any side effect the original call had
+                (database writes, outbound API calls, billable operations) will fire again.
+              </p>
+              {ev?.tool_name && (
+                <p className="mt-2 mono text-xs text-muted-foreground">
+                  Tool: <span className="text-foreground">{ev.tool_name}</span>
+                </p>
+              )}
+              <p className="mt-2 text-xs text-muted-foreground">
+                Replay re-runs side effects. Treat like Try-It, not a production self-service.
+              </p>
+            </>
+          }
+          confirmLabel="Replay"
+          danger
+          onConfirm={() => {
+            setConfirmReplay(false);
+            replay.mutate(eventId);
+          }}
+          onCancel={() => setConfirmReplay(false)}
+        />
+
+        {/* Suppress the banner when the in-flight replay was fired
+            against a different event (user navigated away mid-flight).
+            replay.variables is undefined in idle state and equal to the
+            event id passed to mutate() while pending or settled. */}
+        {(!replay.variables || replay.variables === eventId) && (
+          <ReplayBanner replay={replay} />
+        )}
 
         <nav className="flex border-b border-border text-sm">
           {(["overview", "request", "response", "notifications"] as Tab[]).map((t) => (
@@ -168,7 +243,7 @@ export function EventDrawer({
 function ReplayBanner({
   replay,
 }: {
-  replay: ReturnType<typeof useMutation<ReplayResponse, HttpError, void>>;
+  replay: ReturnType<typeof useMutation<ReplayResponse, HttpError, string>>;
 }) {
   if (replay.isError) {
     return (

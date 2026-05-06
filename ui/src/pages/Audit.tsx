@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Radio, GitCompare, Filter, X } from "lucide-react";
 import { portalAPI, streamAuditEvents, type AuditEvent } from "@/lib/api";
+import { COMPARE_KEY } from "@/lib/storage-keys";
 import { EventDrawer } from "@/components/EventDrawer";
 
 // useDebounced returns `value` after `ms` of stillness; used to avoid
@@ -28,7 +29,10 @@ type JsonFilter = {
   value: string;
 };
 
-const HAS_KEYS = [
+// HAS_KEYS_FALLBACK matches the server's audit.AllowedHasKeysList at the
+// time of writing. It's a fallback only — the live list is fetched from
+// /audit/meta so a server-side schema change doesn't require a UI redeploy.
+const HAS_KEYS_FALLBACK = [
   "request_params",
   "request_headers",
   "response_result",
@@ -37,7 +41,6 @@ const HAS_KEYS = [
   "replayed_from",
 ];
 
-const COMPARE_KEY = "audit-compare-stash";
 
 export default function Audit() {
   const [params, setParams] = useSearchParams();
@@ -58,6 +61,17 @@ export default function Audit() {
   const debouncedSearch = useDebounced(search, 300);
   const debouncedTool = useDebounced(tool, 300);
   const debouncedUser = useDebounced(user, 300);
+
+  // Filter contract — fetch from server so a schema change doesn't strand
+  // the UI. Cached for the whole session; fall back to the hardcoded list
+  // while the request is inflight or if the endpoint is missing.
+  const meta = useQuery({
+    queryKey: ["audit-meta"],
+    queryFn: () => portalAPI.auditMeta(),
+    staleTime: Infinity,
+    retry: false,
+  });
+  const hasKeys = meta.data?.has_keys ?? HAS_KEYS_FALLBACK;
 
   // Drawer selection comes from URL ?id= so deep-linking works.
   const selectedId = params.get("id");
@@ -177,6 +191,7 @@ export default function Audit() {
       {showFilters && (
         <JsonFiltersEditor
           filters={jsonFilters}
+          hasKeys={hasKeys}
           onChange={(fs) => { setJsonFilters(fs); setPage(0); }}
         />
       )}
@@ -296,9 +311,11 @@ export default function Audit() {
 
 function JsonFiltersEditor({
   filters,
+  hasKeys,
   onChange,
 }: {
   filters: JsonFilter[];
+  hasKeys: string[];
   onChange: (fs: JsonFilter[]) => void;
 }) {
   const newRef = useRef<HTMLInputElement>(null);
@@ -361,7 +378,7 @@ function JsonFiltersEditor({
             onChange={(e) => setDraft({ ...draft, path: e.target.value })}
           >
             <option value="">column...</option>
-            {HAS_KEYS.map((k) => <option key={k} value={k}>{k}</option>)}
+            {hasKeys.map((k) => <option key={k} value={k}>{k}</option>)}
           </select>
         ) : (
           <>

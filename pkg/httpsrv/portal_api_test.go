@@ -85,6 +85,52 @@ func TestPortalAPI_Wellknown(t *testing.T) {
 	}
 }
 
+func TestPortalAPI_AuditMeta_Shape(t *testing.T) {
+	mux := portalTestMux(t, audit.NewMemoryLogger())
+	resp := httptest.NewRecorder()
+	mux.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/api/v1/portal/audit/meta", nil))
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.Code)
+	}
+	var got struct {
+		HasKeys     []string `json:"has_keys"`
+		JSONSources []string `json:"json_sources"`
+		Replay      struct {
+			Burst        int `json:"burst"`
+			RefillSecs   int `json:"refill_secs"`
+			SustainedMin int `json:"sustained_min"`
+		} `json:"replay"`
+		Export struct {
+			MaxRows int `json:"max_rows"`
+		} `json:"export"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got.HasKeys) != len(audit.AllowedHasKeys) {
+		t.Errorf("has_keys len = %d, want %d", len(got.HasKeys), len(audit.AllowedHasKeys))
+	}
+	for i, k := range got.HasKeys {
+		if k != audit.AllowedHasKeys[i] {
+			t.Errorf("has_keys[%d] = %q, want %q", i, k, audit.AllowedHasKeys[i])
+		}
+	}
+	if got.Replay.Burst != replayBurst {
+		t.Errorf("replay.burst = %d, want %d", got.Replay.Burst, replayBurst)
+	}
+	if got.Replay.RefillSecs != int(replayRefill/time.Second) {
+		t.Errorf("replay.refill_secs = %d, want %d", got.Replay.RefillSecs, int(replayRefill/time.Second))
+	}
+	// sustained_min must be derived from refill, not hardcoded to burst.
+	wantSustained := int(time.Minute / replayRefill)
+	if got.Replay.SustainedMin != wantSustained {
+		t.Errorf("replay.sustained_min = %d, want %d (60 / refill_secs)", got.Replay.SustainedMin, wantSustained)
+	}
+	if got.Export.MaxRows != maxExportEvents {
+		t.Errorf("export.max_rows = %d, want %d", got.Export.MaxRows, maxExportEvents)
+	}
+}
+
 func TestPortalAPI_AuditTimeseriesAndBreakdown(t *testing.T) {
 	mem := audit.NewMemoryLogger()
 	now := time.Now().UTC()

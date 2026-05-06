@@ -30,7 +30,7 @@ In the portal, navigate to `Audit`. Each row in the events table is clickable; t
 Timing, identity, request id, session id, source (`mcp` for real client calls, `portal-tryit` for /admin/tryit invocations, `portal-replay` for replays), and the replay linkage (`Replayed from`) when present.
 
 ### Request tab
-The captured `request_params` (sanitized via `audit.redact_keys`, with redacted values shown as `"[redacted]"`). Captured request headers when `audit.capture_headers: true`. A truncation warning when the request body exceeded `audit.max_payload_bytes`.
+The captured `request_params` (sanitized via `audit.redact_keys`, with redacted values shown as `"[redacted]"`). Captured request headers when `audit.capture_headers: true` — credential-bearing names (`Authorization`, `Cookie`, `Set-Cookie`, `Proxy-Authorization`, `X-API-Key`) are stored as `"[redacted]"` regardless of the redact-keys config; the names remain visible so an operator can confirm "this request carried an Authorization header" without seeing the token. A truncation warning when the request body exceeded `audit.max_payload_bytes`.
 
 ### Response tab
 The full `CallToolResult` content blocks (text, image, audio, structured) plus `response_error` when the call errored. The shape matches what the SDK serializes to the wire so you can see what the client saw. A truncation warning fires when the response body was too large.
@@ -51,9 +51,9 @@ The drawer's **Replay** button calls `POST /api/v1/portal/audit/events/{id}/repl
 
 The replay banner inside the drawer shows the new event id; clicking it deep-links to that row. Refused replays show a banner explaining why (most common: redacted parameter values, no captured payload, or a tool that's no longer registered).
 
-**Replay re-runs side effects.** If the original call wrote to a database, sent a notification, or charged a card, the replay does it again. There is no dry-run mode and no per-tool allow list. Treat replay like Try-It: a developer affordance for debugging, not a production self-service.
+**Replay re-runs side effects.** If the original call wrote to a database, sent a notification, or charged a card, the replay does it again. There is no dry-run mode and no per-tool allow list. Treat replay like Try-It: a developer affordance for debugging, not a production self-service. The portal asks for confirmation before firing the request; the disabled-state of the Replay button telegraphs whether the row is replayable at all (it isn't, when the original payload wasn't captured or any param was redacted).
 
-Per-identity rate limit (scoped by API key id or OIDC subject): 5 burst, one token refilled every 12 seconds (sustained 5/min). `429` with `Retry-After` when exhausted.
+Per-identity rate limit (scoped by API key id or OIDC subject): 5 burst, one token refilled every 12 seconds (sustained 5/min). `429` with `Retry-After` when exhausted. Tokens are only consumed after validation passes, so clicks on non-replayable rows return `400` without burning the operator's budget.
 
 ## 4. Compare to a baseline
 
@@ -87,7 +87,7 @@ Filters are AND-combined with each other and with the indexed-column filters (to
 
 ## 6. Live tail
 
-The **Live tail** toggle on the Audit page opens an SSE connection to `/api/v1/portal/audit/stream`. New audit events appear in a small ring buffer above the table as they're written; clicking one opens the drawer. The table itself stays a historical-filter view so the live tail doesn't blow away your filtered context.
+The **Live tail** toggle on the Audit page opens an SSE connection to `/api/v1/portal/audit/stream`. New audit events appear in a fixed-cap most-recent-first list (cap 20) above the table as they're written; clicking one opens the drawer. The table itself stays a historical-filter view so the live tail doesn't blow away your filtered context.
 
 The stream sends an opening `: connected` comment on connect, an `event: audit\ndata: <json>` per write, and a `: keepalive` comment every 30 seconds. Slow consumers see per-subscriber drops; the producer never blocks.
 

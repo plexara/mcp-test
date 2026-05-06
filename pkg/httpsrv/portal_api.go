@@ -75,6 +75,7 @@ func (p *PortalAPI) Mount(mux *http.ServeMux, mw func(http.Handler) http.Handler
 	mux.Handle("GET /api/v1/portal/instructions", mw(http.HandlerFunc(p.instructions)))
 	mux.Handle("GET /api/v1/portal/tools", mw(http.HandlerFunc(p.tools)))
 	mux.Handle("GET /api/v1/portal/tools/{name}", mw(http.HandlerFunc(p.toolDetail)))
+	mux.Handle("GET /api/v1/portal/audit/meta", mw(http.HandlerFunc(p.auditMeta)))
 	mux.Handle("GET /api/v1/portal/audit/events", mw(http.HandlerFunc(p.auditEvents)))
 	mux.Handle("GET /api/v1/portal/audit/events/{id}", mw(http.HandlerFunc(p.auditEventDetail)))
 	mux.Handle("GET /api/v1/portal/audit/export", mw(http.HandlerFunc(p.auditExport)))
@@ -148,15 +149,13 @@ func (p *PortalAPI) auditReplay(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, errors.New("authenticated identity required"))
 		return
 	}
-	if !p.limiterForReplay().Allow(idKey) {
-		retry := p.limiterForReplay().RetryAfter(idKey)
-		w.Header().Set("Retry-After", strconv.Itoa(int(retry.Round(time.Second).Seconds())))
-		writeError(w, http.StatusTooManyRequests,
-			fmt.Errorf("replay rate limit exceeded; retry in %s", retry.Round(time.Second)))
-		return
-	}
 
-	// Fetch original event + payload.
+	// Validate the replay request BEFORE consuming a rate-limit token so
+	// that operator clicks on rows that can't replay (no captured payload,
+	// redacted params, missing tool) don't burn the user's per-identity
+	// burst quota. The auth check above keeps the DB-read fan-out gated
+	// to authenticated callers; the cost of a Query + GetPayload per
+	// pre-validation call is acceptable.
 	events, err := p.audit.Query(r.Context(), audit.QueryFilter{EventID: eventID, Limit: 1})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
@@ -203,6 +202,16 @@ func (p *PortalAPI) auditReplay(w http.ResponseWriter, r *http.Request) {
 				fmt.Errorf("tool %q is no longer registered", original.ToolName))
 			return
 		}
+	}
+
+	// Validation passed — only now consume a token. A 429 here costs a
+	// real replay attempt, not a click on a non-replayable row.
+	if !p.limiterForReplay().Allow(idKey) {
+		retry := p.limiterForReplay().RetryAfter(idKey)
+		w.Header().Set("Retry-After", strconv.Itoa(int(retry.Round(time.Second).Seconds())))
+		writeError(w, http.StatusTooManyRequests,
+			fmt.Errorf("replay rate limit exceeded; retry in %s", retry.Round(time.Second)))
+		return
 	}
 
 	// Deep-copy the captured params before passing to CallTool so
@@ -765,6 +774,25 @@ func parseQueryFilter(r *http.Request) audit.QueryFilter {
 	}
 
 	return f
+}
+
+// auditMeta returns the JSON-filter contract surface (allowlisted has=
+// columns and JSON-source prefixes) so the portal UI can build its
+// filter editor against the server's source of truth instead of
+// duplicating the list in client code.
+func (p *PortalAPI) auditMeta(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"has_keys":     audit.AllowedHasKeysList(),
+		"json_sources": audit.AllowedJSONSourcesList(),
+		"replay": map[string]any{
+			"burst":         replayBurst,
+			"refill_secs":   int(replayRefill / time.Second),
+			"sustained_min": int(time.Minute / replayRefill),
+		},
+		"export": map[string]any{
+			"max_rows": maxExportEvents,
+		},
+	})
 }
 
 func (p *PortalAPI) auditEvents(w http.ResponseWriter, r *http.Request) {

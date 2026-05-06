@@ -144,17 +144,32 @@ func TestAudit_PayloadCapture_HeadersOptIn(t *testing.T) {
 		t.Errorf("headers captured without opt-in: %+v", h)
 	}
 
-	// With WithHeaderCapture: headers stored.
+	// With WithHeaderCapture: headers stored, sensitive ones redacted.
 	mem2 := audit.NewMemoryLogger()
 	mw2 := Audit(chain, mem2, nil, nil, WithPayloadCapture(0), WithHeaderCapture())
 	wrapped2 := mw2((&fakeMethodHandler{}).handle)
-	_, _ = wrapped2(context.Background(), "tools/call", req)
+	reqWithSecrets := &mcp.ServerRequest[*mcp.CallToolParams]{
+		Params: &mcp.CallToolParams{Name: "headers"},
+		Extra: &mcp.RequestExtra{Header: http.Header{
+			"X-Test":        []string{"abc"},
+			"Authorization": []string{"Bearer leak-me"},
+			"Cookie":        []string{"session=secret"},
+			"X-Api-Key":     []string{"real-key"},
+		}},
+	}
+	_, _ = wrapped2(context.Background(), "tools/call", reqWithSecrets)
 	h := mem2.Snapshot()[0].Payload.RequestHeaders
 	if h == nil {
 		t.Fatal("expected headers captured with WithHeaderCapture")
 	}
 	if got := h["X-Test"]; len(got) != 1 || got[0] != "abc" {
 		t.Errorf("X-Test = %v", got)
+	}
+	for _, name := range []string{"Authorization", "Cookie", "X-Api-Key"} {
+		got := http.Header(h).Get(name)
+		if got != "[redacted]" {
+			t.Errorf("%s should be redacted in audit_payloads.request_headers, got %q", name, got)
+		}
 	}
 }
 
