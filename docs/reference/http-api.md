@@ -51,7 +51,9 @@ Behind the cookie or `X-API-Key` / `Authorization: Bearer`.
 | `GET` | `/api/v1/portal/tools/{name}` | Same shape, single tool. |
 | `GET` | `/api/v1/portal/audit/events` | Paginated audit events. Query: `from`, `to` (RFC 3339), `tool`, `user`, `session`, `success`, `q`, `limit`, `offset`, plus the JSONB filters described below. |
 | `GET` | `/api/v1/portal/audit/events/{id}` | Single event by id (UUID); includes the captured payload row when present. 400 on a non-UUID id, 404 when the event isn't recorded. |
+| `POST` | `/api/v1/portal/audit/events/{id}/replay` | Re-invokes the captured tool call through an in-process MCP client. Writes a new audit event tagged `source=portal-replay` with `replayed_from` pointing at `{id}`. Per-identity rate limited (5 burst, 1 token / 12s); returns `429 Too Many Requests` with `Retry-After` when exhausted. Refuses (`400`) if the original event has no captured payload, has redacted parameter values, or names a tool no longer registered. CSRF-gated via `X-Requested-With`. |
 | `GET` | `/api/v1/portal/audit/export` | NDJSON stream of summary rows for a filter. `format=jsonl` (default) is the only supported format. Same filter surface as `/events`. Capped at 100,000 rows per request. |
+| `GET` | `/api/v1/portal/audit/stream` | SSE live tail of new audit events. One `event: audit\ndata: <event JSON>` per write; opening comment `: connected` confirms the connection; `: keepalive` every 30 seconds. Sets `X-Accel-Buffering: no` for nginx-fronted deployments. |
 | `GET` | `/api/v1/portal/audit/timeseries` | Bucketed counts. Query: `from`, `to`, `bucket` (Go duration). |
 | `GET` | `/api/v1/portal/audit/breakdown` | Group-by aggregations. Query: `by` (`tool`/`user`/`success`/`auth_type`). |
 | `GET` | `/api/v1/portal/dashboard` | 1-hour stats + recent activity. |

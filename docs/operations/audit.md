@@ -101,6 +101,48 @@ JSON string, `?param.code=200` matches the number.
 Allowed `has=` columns: `request_params`, `request_headers`,
 `response_result`, `response_error`, `notifications`, `replayed_from`.
 
+### Replay a captured call
+
+`POST /api/v1/portal/audit/events/{id}/replay` re-invokes the tool with the same arguments captured on the original event, through an in-process MCP client. The replay produces a new audit row tagged `source=portal-replay` with `replayed_from = {id}`; that row is fired with the portal-authenticated identity, not the original caller's, so an operator can see who triggered the replay.
+
+```bash
+# Find a tool error from the last hour that you want to reproduce.
+curl -H "X-API-Key: $KEY" \
+  "$BASE/api/v1/portal/audit/events?response.isError=true&from=$(date -u -v-1H +%FT%TZ)&limit=5" \
+  | jq -r '.events[].id'
+
+# Replay one. The response includes the new event's id so you can
+# follow up with /events/{id}.
+curl -X POST -H "X-API-Key: $KEY" -H "X-Requested-With: x" \
+  "$BASE/api/v1/portal/audit/events/<id>/replay" | jq
+```
+
+The replay refuses (`400`) when:
+
+- the original event has no captured payload (capture was disabled when it was written),
+- any captured parameter value is the literal `[redacted]` (replaying with a placeholder would mislead about what the call did; re-stage manually via Try-It with the real value),
+- the named tool is no longer registered.
+
+A per-identity token bucket (5 burst, ~5/min sustained) protects against runaway replay loops; exhausted callers get `429 Too Many Requests` with a `Retry-After` header.
+
+Replay re-runs the tool's side effects. If the original call wrote to a database, sent a notification, or charged a card, the replay does it again. There is no dry-run mode and no per-tool allow list; if the operator can hit `/replay`, every registered tool is replayable. Treat this like Try-It: a developer affordance for debugging, not a production self-service.
+
+### Live tail
+
+`GET /api/v1/portal/audit/stream` is an SSE endpoint that emits one `event: audit\ndata: <event JSON>` per newly-written audit event. Open the connection, fire calls, watch them flow:
+
+```bash
+# In one terminal:
+curl -N -H "X-API-Key: $KEY" "$BASE/api/v1/portal/audit/stream"
+
+# In another, fire some tool calls; the first terminal sees them
+# arrive within ~200ms of each write.
+```
+
+The endpoint emits an opening `: connected` comment so the consumer can detect the connection is live before the first audit row arrives, and a `: keepalive` comment every 30 seconds to keep idle proxies from killing the connection. Subscribers see only events written AFTER they subscribe; for history use `/events` or `/export`.
+
+Slow consumers drop events silently per-subscriber (the producer never blocks). The buffered channel default is 64 events; SSE clients should drain promptly to avoid drops during bursts.
+
 ### NDJSON export
 
 `/api/v1/portal/audit/export?format=jsonl` streams summary rows as

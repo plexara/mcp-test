@@ -10,10 +10,11 @@ import (
 	"github.com/plexara/mcp-test/pkg/audit"
 )
 
-// Real audit IDs are UUIDs (audit.NewEvent stamps uuid.NewString()), and
-// the detail endpoint validates the path param to block the gosec G706
-// log-injection flow. These tests use literal UUIDs so they exercise the
-// same path operators hit.
+// Audit event IDs are UUIDs assigned by the storage layer
+// (Postgres on Log, MemoryLogger on Log) when the caller leaves
+// Event.ID empty. The detail endpoint validates the path param as a
+// UUID to block the gosec G706 log-injection flow. These tests set
+// the ID explicitly so they exercise the same path operators hit.
 const (
 	testEventIDFound  = "11111111-1111-1111-1111-111111111111"
 	testEventIDOther  = "22222222-2222-2222-2222-222222222222"
@@ -67,16 +68,17 @@ func TestPortalAPI_AuditEventDetail_RejectsNonUUID(t *testing.T) {
 	}
 }
 
-func TestPortalAPI_AuditEventDetail_PayloadAbsentForMemoryLogger(t *testing.T) {
+func TestPortalAPI_AuditEventDetail_PayloadIncludedForMemoryLogger(t *testing.T) {
+	// MemoryLogger now implements PayloadLogger (added when the
+	// replay endpoint needed in-memory payload retrieval), so the
+	// detail endpoint returns the payload alongside the summary.
 	mem := audit.NewMemoryLogger()
 	ev := audit.Event{
 		ID:        testEventIDOther,
 		ToolName:  "echo",
 		Transport: "http",
 		Source:    "mcp",
-		// MemoryLogger doesn't persist payloads even if attached, so the
-		// detail endpoint should return summary only.
-		Payload: &audit.Payload{JSONRPCMethod: "tools/call"},
+		Payload:   &audit.Payload{JSONRPCMethod: "tools/call"},
 	}
 	_ = mem.Log(context.Background(), ev)
 
@@ -88,9 +90,11 @@ func TestPortalAPI_AuditEventDetail_PayloadAbsentForMemoryLogger(t *testing.T) {
 	}
 	var got map[string]any
 	_ = json.NewDecoder(w.Body).Decode(&got)
-	// MemoryLogger isn't a PayloadLogger, so the detail handler clears
-	// the field to nil; serialized JSON should omit it.
-	if _, ok := got["payload"]; ok {
-		t.Errorf("payload should be omitted for non-payload logger; body=%v", got)
+	payload, ok := got["payload"].(map[string]any)
+	if !ok {
+		t.Fatalf("payload missing or wrong type; body=%v", got)
+	}
+	if payload["jsonrpc_method"] != "tools/call" {
+		t.Errorf("payload.jsonrpc_method = %v, want tools/call", payload["jsonrpc_method"])
 	}
 }

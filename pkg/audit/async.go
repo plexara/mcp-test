@@ -26,6 +26,50 @@ type AsyncLogger struct {
 
 	mu      sync.Mutex
 	dropped uint64
+
+	// Live-tail subscribers. Mutex-protected for the registry
+	// itself; sends to the channels are non-blocking so a slow
+	// consumer can't stall the drain goroutine. Drop counts per
+	// subscriber are intentionally NOT tracked individually; the
+	// global Dropped() count covers the buffered-channel-input
+	// drop, and sse-tail consumers are expected to handle gaps.
+	subsMu sync.Mutex
+	subs   []*subscriber
+}
+
+// subscriber holds a per-consumer channel + a closed flag, both
+// protected by mu so a concurrent broadcast and cancel cannot race
+// on s.ch (send on closed channel panic / data race detector).
+type subscriber struct {
+	mu     sync.Mutex
+	ch     chan Event
+	closed bool
+}
+
+// send attempts a non-blocking send. Caller must NOT hold s.mu.
+// Returns silently when the buffer is full (drop) or the subscriber
+// has been cancelled (drop).
+func (s *subscriber) send(ev Event) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return
+	}
+	select {
+	case s.ch <- ev:
+	default:
+	}
+}
+
+// closeOnce closes the channel exactly once. Idempotent.
+func (s *subscriber) closeOnce() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return
+	}
+	s.closed = true
+	close(s.ch)
 }
 
 // NewAsyncLogger returns a buffered async wrapper around inner. bufferSize
@@ -181,6 +225,52 @@ func (a *AsyncLogger) write(ev Event) {
 	defer cancel()
 	if err := a.inner.Log(ctx, ev); err != nil {
 		a.logger.Warn("audit write failed", "tool", ev.ToolName, "err", err)
+		return
+	}
+	// Broadcast successful writes to live-tail subscribers. Done
+	// after inner.Log() so subscribers only see persisted events;
+	// a write that errored out doesn't surface to the live tail.
+	a.broadcast(ev)
+}
+
+// Subscribe registers a live-tail consumer and returns the channel
+// plus a cancel func. See SubscribingLogger doc for semantics.
+//
+// buf <= 0 falls back to a sane default (64). Slow consumers cause
+// per-subscriber event drops, not producer-side blocking.
+func (a *AsyncLogger) Subscribe(buf int) (<-chan Event, func()) {
+	if buf <= 0 {
+		buf = 64
+	}
+	s := &subscriber{ch: make(chan Event, buf)}
+	a.subsMu.Lock()
+	a.subs = append(a.subs, s)
+	a.subsMu.Unlock()
+
+	cancel := func() {
+		a.subsMu.Lock()
+		for i, x := range a.subs {
+			if x == s {
+				a.subs = append(a.subs[:i], a.subs[i+1:]...)
+				break
+			}
+		}
+		a.subsMu.Unlock()
+		s.closeOnce()
+	}
+	return s.ch, cancel
+}
+
+// broadcast sends ev to every active subscriber, non-blocking. A
+// subscriber whose buffer is full silently drops this event. Each
+// subscriber's send is gated by its own mutex so a concurrent cancel
+// can't close the channel mid-send.
+func (a *AsyncLogger) broadcast(ev Event) {
+	a.subsMu.Lock()
+	subs := append([]*subscriber{}, a.subs...)
+	a.subsMu.Unlock()
+	for _, s := range subs {
+		s.send(ev)
 	}
 }
 

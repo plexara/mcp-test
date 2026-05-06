@@ -5,6 +5,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // breakdownKeyFn picks the per-event key used by Breakdown.
@@ -16,17 +18,97 @@ import (
 type MemoryLogger struct {
 	mu     sync.Mutex
 	events []Event
+
+	subsMu sync.Mutex
+	subs   []*memSubscriber
+}
+
+// memSubscriber mirrors AsyncLogger's subscriber: per-subscriber mutex
+// gates send and close so a cancel doesn't race with an in-flight
+// broadcast.
+type memSubscriber struct {
+	mu     sync.Mutex
+	ch     chan Event
+	closed bool
+}
+
+func (s *memSubscriber) send(ev Event) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return
+	}
+	select {
+	case s.ch <- ev:
+	default:
+	}
+}
+
+func (s *memSubscriber) closeOnce() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return
+	}
+	s.closed = true
+	close(s.ch)
 }
 
 // NewMemoryLogger returns an empty logger.
 func NewMemoryLogger() *MemoryLogger { return &MemoryLogger{} }
 
-// Log appends the event.
+// Log appends the event and broadcasts to live-tail subscribers.
+// Auto-assigns ev.ID when empty, matching the Postgres store's
+// behavior so test fixtures see a stable id without setting one
+// explicitly.
 func (m *MemoryLogger) Log(_ context.Context, ev Event) error {
+	if ev.ID == "" {
+		ev.ID = uuid.NewString()
+	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.events = append(m.events, ev)
+	m.mu.Unlock()
+	m.broadcast(ev)
 	return nil
+}
+
+// Subscribe registers a live-tail consumer. See SubscribingLogger doc.
+//
+// Used by /audit/stream tests that bypass AsyncLogger and use
+// MemoryLogger directly. Same buffered-channel + non-blocking-send
+// semantics as AsyncLogger.Subscribe; same per-subscriber mutex
+// pattern to keep cancel from racing with broadcast.
+func (m *MemoryLogger) Subscribe(buf int) (<-chan Event, func()) {
+	if buf <= 0 {
+		buf = 64
+	}
+	s := &memSubscriber{ch: make(chan Event, buf)}
+	m.subsMu.Lock()
+	m.subs = append(m.subs, s)
+	m.subsMu.Unlock()
+
+	cancel := func() {
+		m.subsMu.Lock()
+		for i, x := range m.subs {
+			if x == s {
+				m.subs = append(m.subs[:i], m.subs[i+1:]...)
+				break
+			}
+		}
+		m.subsMu.Unlock()
+		s.closeOnce()
+	}
+	return s.ch, cancel
+}
+
+// broadcast sends ev to every active subscriber, non-blocking.
+func (m *MemoryLogger) broadcast(ev Event) {
+	m.subsMu.Lock()
+	subs := append([]*memSubscriber{}, m.subs...)
+	m.subsMu.Unlock()
+	for _, s := range subs {
+		s.send(ev)
+	}
 }
 
 // Query returns matching events ordered by timestamp DESC. Only ToolName,
@@ -120,6 +202,21 @@ func (m *MemoryLogger) Stream(ctx context.Context, f QueryFilter, fn func(Event)
 		}
 	}
 	return nil
+}
+
+// GetPayload returns the in-memory event's Payload pointer, matching
+// the PayloadLogger contract used by the portal detail and replay
+// endpoints. Returns (nil, nil) when no event with the given id is
+// stored, or when the event was logged without a Payload.
+func (m *MemoryLogger) GetPayload(_ context.Context, eventID string) (*Payload, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, ev := range m.events {
+		if ev.ID == eventID {
+			return ev.Payload, nil
+		}
+	}
+	return nil, nil
 }
 
 // Snapshot returns a copy of all events in insertion order, for assertions.

@@ -122,7 +122,7 @@ func Build(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*Appli
 			app.browser = ba
 		}
 		// Rebuild the mux with portal handlers attached.
-		portalAPI := httpsrv.NewPortalAPI(cfg, app.registry, auditLog)
+		portalAPI := httpsrv.NewPortalAPI(cfg, app.registry, auditLog, app.mcpServer, cfg.Audit.RedactKeys)
 		adminAPI := httpsrv.NewAdminAPI(dbStore, app.mcpServer, auditLog, app.registry, cfg.Audit.RedactKeys)
 		portalAuth := httpsrv.NewPortalAuth(sessions, chain)
 		app.mux = buildMuxWithPortal(cfg, app.mcpServer, app.readiness, app.browser, portalAPI, adminAPI, portalAuth)
@@ -143,7 +143,7 @@ func BuildWithDeps(cfg *config.Config, logger *slog.Logger, chain *auth.Chain, a
 		if cfg.Portal.CookieSecret != "" {
 			sessions, _ = httpsrv.NewSessionStore(cfg.Portal.CookieName, cfg.Portal.CookieSecret, false, time.Hour)
 		}
-		portalAPI := httpsrv.NewPortalAPI(cfg, app.registry, auditLog)
+		portalAPI := httpsrv.NewPortalAPI(cfg, app.registry, auditLog, app.mcpServer, cfg.Audit.RedactKeys)
 		adminAPI := httpsrv.NewAdminAPI(nil, app.mcpServer, auditLog, app.registry, cfg.Audit.RedactKeys)
 		portalAuth := httpsrv.NewPortalAuth(sessions, chain)
 		app.sessions = sessions
