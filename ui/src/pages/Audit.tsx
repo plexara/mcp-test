@@ -263,7 +263,7 @@ export default function Audit() {
             </tr>
           </thead>
           <tbody>
-            {q.data?.events.map((e) => (
+            {(q.data?.events ?? []).map((e) => (
               <tr
                 key={e.id}
                 className={`border-t border-border hover:bg-muted/30 transition-colors cursor-pointer ${

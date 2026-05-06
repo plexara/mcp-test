@@ -279,7 +279,9 @@ func (m *MemoryLogger) TimeSeries(_ context.Context, from, to time.Time, bucket 
 func (m *MemoryLogger) Breakdown(_ context.Context, from, to time.Time, dimension string) ([]BreakdownPoint, error) {
 	keyFn := breakdownKeyFn(dimension)
 	if keyFn == nil {
-		return nil, nil
+		// Empty slice (not nil) so JSON callers always see [] not null;
+		// matches the Postgres store's behavior on unknown dimension.
+		return []BreakdownPoint{}, nil
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()

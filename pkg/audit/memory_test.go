@@ -18,6 +18,29 @@ func newTestEvent(tool string, ok bool, dur int64, ts time.Time, sub string) Eve
 	}
 }
 
+// TestMemoryLogger_EmptyResultsAreNotNil enforces the invariant that
+// every list-returning method on the Logger contract returns a non-nil
+// slice on empty input. Go marshals nil slices as JSON null, which
+// crashes any portal SPA call site that does `.map(...)` on the
+// response (regression seen on a fresh dev deployment with zero rows).
+func TestMemoryLogger_EmptyResultsAreNotNil(t *testing.T) {
+	m := NewMemoryLogger()
+	ctx := context.Background()
+
+	if got, _ := m.Query(ctx, QueryFilter{}); got == nil {
+		t.Error("Query on empty backend returned nil; want non-nil slice")
+	}
+	if got, _ := m.TimeSeries(ctx, time.Time{}, time.Time{}, time.Minute); got == nil {
+		t.Error("TimeSeries on empty backend returned nil; want non-nil slice")
+	}
+	if got, _ := m.Breakdown(ctx, time.Time{}, time.Time{}, "tool"); got == nil {
+		t.Error("Breakdown(known dim) on empty backend returned nil; want non-nil slice")
+	}
+	if got, _ := m.Breakdown(ctx, time.Time{}, time.Time{}, "no-such-dim"); got == nil {
+		t.Error("Breakdown(unknown dim) returned nil; want empty slice for parity with Postgres backend")
+	}
+}
+
 func TestMemoryLogger_QueryFilters(t *testing.T) {
 	m := NewMemoryLogger()
 	now := time.Now().UTC().Truncate(time.Second)

@@ -805,6 +805,9 @@ func (p *PortalAPI) auditEvents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+	// Audit backends (postgres + memory) guarantee a non-nil slice on
+	// empty result sets, so JSON marshals as [] not null. The SPA
+	// relies on `events.map(...)` being safe on a fresh deployment.
 	total, _ := p.audit.Count(r.Context(), f)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"events": events,
@@ -1063,6 +1066,8 @@ func (p *PortalAPI) dashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	recent, _ := p.audit.Query(r.Context(), audit.QueryFilter{From: from, To: now, Limit: 20})
+	// Audit backends guarantee a non-nil slice; the SPA's
+	// `recent.map(...)` is safe on a fresh deployment.
 	writeJSON(w, http.StatusOK, map[string]any{
 		"window_from": from,
 		"window_to":   now,

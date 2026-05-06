@@ -255,12 +255,17 @@ tools-check: tools-install
 verify: tools-check fmt-check vet embed-clean test lint security coverage-gate coverage-report
 	@echo ""
 	@echo "=== verify: all checks passed ==="
+	@# Pre-commit gate sentinel: record the current diff hash so the
+	@# review-gate hook knows verify is green for this exact tree state.
+	@mkdir -p .claude
+	@{ git diff --cached HEAD 2>/dev/null; git diff 2>/dev/null; } \
+		| shasum -a 256 | cut -c1-16 > .claude/.last-verify-passed
 
 ## dev: One-command full local stack; postgres + keycloak in docker, binary in foreground.
 ##      Builds the SPA into the embed dir if dist/index.html is missing so the
 ##      portal renders on first run. Generates .env.dev with random secrets on
 ##      first run (gitignored); subsequent runs reuse those so sessions persist.
-dev: dev-up dev-wait dev-ui-if-needed dev-secrets
+dev: dev-secrets dev-up dev-wait dev-ui-if-needed
 	@. ./.env.dev && \
 	echo "" && \
 	echo "Starting mcp-test (config: configs/mcp-test.live.yaml)..." && \
@@ -273,7 +278,7 @@ dev: dev-up dev-wait dev-ui-if-needed dev-secrets
 
 ## dev-anon: Run anonymous-mode dev binary (no Keycloak, no auth); fastest iteration
 dev-anon: dev-secrets
-	docker compose -f docker-compose.dev.yml up -d postgres
+	@. ./.env.dev && docker compose -f docker-compose.dev.yml up -d postgres
 	@. ./.env.dev && $(GO) run $(CMD_DIR) --config configs/mcp-test.dev.yaml
 
 ## dev-secrets: Generate .env.dev with random cookie secret + dev API key on first run.
@@ -288,14 +293,20 @@ dev-secrets:
 		chmod 600 .env.dev; \
 	fi
 
-## dev-up: Start the dev stack (postgres + keycloak) without the binary
-dev-up:
-	docker compose -f docker-compose.dev.yml up -d postgres keycloak
+## dev-up: Start the dev stack (postgres + keycloak) without the binary.
+##         Depends on dev-secrets because docker compose interpolates the
+##         MCPTEST_COOKIE_SECRET reference at parse time even when the
+##         mcp-test service isn't being started.
+dev-up: dev-secrets
+	@. ./.env.dev && docker compose -f docker-compose.dev.yml up -d postgres keycloak
 
-## dev-wait: Block until postgres and keycloak are reachable
-dev-wait:
+## dev-wait: Block until postgres and keycloak are reachable.
+##           Sources .env.dev because `docker compose exec` re-parses the
+##           compose file and its interpolated MCPTEST_COOKIE_SECRET
+##           reference must resolve.
+dev-wait: dev-secrets
 	@echo "Waiting for Postgres..."
-	@until docker compose -f docker-compose.dev.yml exec -T postgres pg_isready -U mcp >/dev/null 2>&1; do sleep 1; done
+	@. ./.env.dev && until docker compose -f docker-compose.dev.yml exec -T postgres pg_isready -U mcp >/dev/null 2>&1; do sleep 1; done
 	@echo "Waiting for Keycloak realm..."
 	@until curl -fs http://localhost:8081/realms/mcp-test/.well-known/openid-configuration >/dev/null 2>&1; do sleep 2; done
 	@echo "Stack ready."
@@ -307,12 +318,12 @@ dev-ui-if-needed:
 	fi
 
 ## dev-down: Stop the dev stack
-dev-down:
-	docker compose -f docker-compose.dev.yml down
+dev-down: dev-secrets
+	@. ./.env.dev && docker compose -f docker-compose.dev.yml down
 
 ## dev-logs: Tail compose logs
-dev-logs:
-	docker compose -f docker-compose.dev.yml logs -f --tail=100
+dev-logs: dev-secrets
+	@. ./.env.dev && docker compose -f docker-compose.dev.yml logs -f --tail=100
 
 ## docker: Build the docker image (matches the goreleaser pipeline).
 ##         Builds the binary first, copies it where the goreleaser-style

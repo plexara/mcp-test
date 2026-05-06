@@ -212,23 +212,48 @@ func (a *AdminAPI) recordTryitAudit(
 		}
 	}
 
-	success := callErr == nil
+	// errCategory precedence mirrors pkg/mcpmw/audit.go and
+	// recordReplayAudit so the Try-It row's error_category bucket
+	// matches what a native tool call would land in.
+	success := callErr == nil && (res == nil || !res.IsError)
 	errMsg := ""
+	errCategory := ""
+	if res != nil && res.IsError && callErr == nil {
+		errMsg = "tool returned IsError"
+		errCategory = "tool"
+	}
 	if callErr != nil {
 		errMsg = callErr.Error()
+		errCategory = "handler"
 	}
-	if res != nil && res.IsError {
-		success = false
-		if errMsg == "" {
-			errMsg = "tool returned IsError"
-		}
-		ev.ErrorCategory = "tool"
-	}
+	ev.ErrorCategory = errCategory
 	ev.WithResult(success, errMsg, durMS)
 	if res != nil {
 		chars, blocks := measureResultBlocks(res)
 		ev.WithResponseSize(chars, blocks)
 	}
+
+	// Attach the captured payload so the audit drawer's Request /
+	// Response tabs render the actual call instead of "No response
+	// captured." Try-It bypasses the MCP middleware entirely (it
+	// writes its own audit row), so without this the audit_payloads
+	// sibling row never lands. Mirrors recordReplayAudit.
+	pl := &audit.Payload{
+		JSONRPCMethod:     "tools/call",
+		RequestRemoteAddr: r.RemoteAddr,
+		RequestParams:     audit.SanitizeParameters(args, a.redactKeys),
+	}
+	if res != nil {
+		pl.ResponseResult = callToolResultToMap(res)
+	}
+	if callErr != nil {
+		pl.ResponseError = map[string]any{
+			"message":  callErr.Error(),
+			"category": errCategory,
+		}
+	}
+	ev.Payload = pl
+
 	_ = a.audit.Log(r.Context(), *ev)
 }
 
