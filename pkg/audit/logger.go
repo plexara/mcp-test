@@ -104,7 +104,7 @@ type QueryFilter struct {
 
 	// JSONFilters narrow by JSONB content of audit_payloads.
 	// Each filter checks that the value at Path inside Source equals
-	// Value (with light type detection on Value, see ParseJSONValue).
+	// Value (with light type detection on Value, see ParseJSONFilterValue).
 	JSONFilters []JSONPathFilter
 
 	// HasKeys narrows to events whose audit_payloads row has the named

@@ -112,12 +112,16 @@ func TestNumericEq_TypeSurface(t *testing.T) {
 		{"float64 eq", 3, float64(3), true},
 		{"float64 ne", 3, float64(4), false},
 		{"float32", 3, float32(3), true},
-		{"int64", 3, int64(3), true},
+		{"int8", 3, int8(3), true},
+		{"int16", 3, int16(3), true},
 		{"int32", 3, int32(3), true},
+		{"int64", 3, int64(3), true},
 		{"int", 3, 3, true},
-		{"uint", 3, uint(3), true},
+		{"uint8", 3, uint8(3), true},
+		{"uint16", 3, uint16(3), true},
 		{"uint32", 3, uint32(3), true},
 		{"uint64", 3, uint64(3), true},
+		{"uint", 3, uint(3), true},
 		{"json.Number", 3.5, json.Number("3.5"), true},
 		{"unsupported type", 3, "3", false},
 	}
@@ -156,6 +160,70 @@ func TestIsAllowedHasKey(t *testing.T) {
 	for _, k := range []string{"", "events", "id", "DROP TABLE"} {
 		if IsAllowedHasKey(k) {
 			t.Errorf("IsAllowedHasKey(%q) = true, want false", k)
+		}
+	}
+}
+
+func TestAllowList_FunctionAndSliceAgree(t *testing.T) {
+	// IsAllowedHasKey and IsAllowedJSONSource are implemented as closed
+	// switches; AllowedHasKeys and AllowedJSONSources are exported
+	// slices for documentation. Both must agree in BOTH directions:
+	// every slice entry must be allowed by the function, and the
+	// function must not allow anything outside the slice (within a
+	// candidate set wide enough to catch typos / additions).
+	//
+	// The candidate set lists every column that could plausibly be
+	// added to has= and every source that could plausibly be added to
+	// the JSON-path syntax; if a future change widens the function but
+	// forgets the slice (or vice versa), this test surfaces the drift.
+
+	// Has keys.
+	for _, k := range AllowedHasKeys {
+		if !IsAllowedHasKey(k) {
+			t.Errorf("AllowedHasKeys contains %q but IsAllowedHasKey rejects it", k)
+		}
+	}
+	candidateColumns := append([]string{}, AllowedHasKeys...)
+	candidateColumns = append(candidateColumns,
+		"event_id", "ts", "captured_at", "request_size_bytes",
+		"response_size_bytes", "request_truncated", "response_truncated",
+		"jsonrpc_method", "jsonrpc_id", "request_method", "request_path",
+		"request_remote_addr", "notifications_truncated",
+	)
+	for _, k := range candidateColumns {
+		want := false
+		for _, allowed := range AllowedHasKeys {
+			if k == allowed {
+				want = true
+				break
+			}
+		}
+		if got := IsAllowedHasKey(k); got != want {
+			t.Errorf("IsAllowedHasKey(%q) = %v, want %v (slice/function disagree)", k, got, want)
+		}
+	}
+
+	// JSON sources.
+	for _, s := range AllowedJSONSources {
+		if !IsAllowedJSONSource(s) {
+			t.Errorf("AllowedJSONSources contains %q but IsAllowedJSONSource rejects it", s)
+		}
+	}
+	for _, s := range append([]string{}, AllowedJSONSources...) {
+		want := false
+		for _, a := range AllowedJSONSources {
+			if s == a {
+				want = true
+				break
+			}
+		}
+		if got := IsAllowedJSONSource(s); got != want {
+			t.Errorf("IsAllowedJSONSource(%q) = %v, want %v", s, got, want)
+		}
+	}
+	for _, s := range []string{"", "params", "headers", "result", "PARAM", "Param"} {
+		if IsAllowedJSONSource(s) {
+			t.Errorf("IsAllowedJSONSource(%q) = true, want false", s)
 		}
 	}
 }

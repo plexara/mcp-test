@@ -292,15 +292,31 @@ func TestPortalAPI_AuditExport_HonorsLimitCap(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
 	}
-	var lines int
+	// Documented contract: exports start from the head of the matching
+	// set (newest first by ts DESC). With ts increasing per i, the
+	// newest 4 ids are the last-inserted 4. Assert both the count and
+	// the order so a regression that shipped tail-of-set instead of
+	// head would surface.
+	var ids []string
 	scanner := bufio.NewScanner(w.Body)
 	for scanner.Scan() {
-		if scanner.Text() != "" {
-			lines++
+		line := scanner.Text()
+		if line == "" {
+			continue
 		}
+		var ev struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal([]byte(line), &ev); err != nil {
+			t.Fatalf("line not JSON: %v\n%s", err, line)
+		}
+		ids = append(ids, ev.ID)
 	}
-	if lines != 4 {
-		t.Errorf("limit=4 with %d events stored: got %d lines, want 4", stored, lines)
+	// ids 'a','b','c','d','e','f','g','h','i','j' inserted at
+	// ts=now+0..9s. Newest 4 by ts DESC: j, i, h, g.
+	want := []string{"j", "i", "h", "g"}
+	if !equalStringSlice(ids, want) {
+		t.Errorf("limit=4 emitted ids = %v, want %v (head of matching set, ts DESC)", ids, want)
 	}
 }
 

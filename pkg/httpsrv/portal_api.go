@@ -1,6 +1,7 @@
 package httpsrv
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -119,9 +120,13 @@ func (p *PortalAPI) toolDetail(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
 }
 
-// validPath reports whether path is non-empty and has no empty segments.
-// "?param.a..b=v" parses to ["a","","b"] which can't match any real
-// payload; rather than silently building a doomed filter, drop it.
+// validPath reports whether path is non-empty, has no empty segments,
+// and contains no ASCII control characters. Empty segments
+// ("?param.a..b=v" -> ["a","","b"]) can't match any real payload, and
+// control bytes in a path could land in slog lines (a malformed-filter
+// path is logged via truncateForLog) and inject newlines / tabs into
+// the log stream. Reject at parse time rather than depending on every
+// downstream sink to sanitize.
 func validPath(path []string) bool {
 	if len(path) == 0 {
 		return false
@@ -129,6 +134,12 @@ func validPath(path []string) bool {
 	for _, seg := range path {
 		if seg == "" {
 			return false
+		}
+		for i := 0; i < len(seg); i++ {
+			c := seg[i]
+			if c < 0x20 || c == 0x7f {
+				return false
+			}
 		}
 	}
 	return true
@@ -180,11 +191,15 @@ func parseQueryFilter(r *http.Request) audit.QueryFilter {
 			if !validPath(path) {
 				continue
 			}
-			// Headers are stored under the canonical Go form
-			// (User-Agent, X-Api-Key, etc.). Operators commonly write
-			// them in lower-case in URLs and config; canonicalize so
-			// ?header.user-agent matches ?header.User-Agent.
+			// Headers are a flat map[string][]string on the wire and on
+			// disk; only one path segment is meaningful (the header name).
+			// Reject ?header.X-Api-Key.foo=v at parse time rather than
+			// silently truncating .foo, which would mislead the operator
+			// about what was actually matched.
 			if source == "header" {
+				if len(path) != 1 {
+					continue
+				}
 				path[0] = http.CanonicalHeaderKey(path[0])
 			}
 			for _, v := range vs {
@@ -327,21 +342,38 @@ func (p *PortalAPI) auditExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/x-ndjson")
-	// Suggest a filename for browser-driven downloads; consumers
-	// piping with curl/jq ignore Content-Disposition.
-	w.Header().Set("Content-Disposition", `attachment; filename="audit.jsonl"`)
-	w.WriteHeader(http.StatusOK)
-
+	// All response headers are deferred until the first row encodes
+	// successfully (or the no-rows-success terminal write). If Stream
+	// errors before any row (DB down, planner failure on first page),
+	// writeError can still send a real 5xx with the right Content-Type;
+	// if we'd already sent the ndjson + attachment headers, a 500 JSON
+	// body would download as "audit.jsonl" in a browser.
 	enc := json.NewEncoder(w)
-	// NDJSON consumers want bytes-as-written; default HTML escaping turns
-	// "<" into "<" inside captured tool output, which surprises
-	// operators eyeballing the file. Tools downstream parse either form
-	// fine, but readability matters here.
-	enc.SetEscapeHTML(false)
+	enc.SetEscapeHTML(false) // raw '<' in tool output, not "&lt;"
 	written := 0
+	headerWritten := false
 	flusher, _ := w.(http.Flusher)
+
+	// writeExportHeaders is the single place export-specific response
+	// headers are committed. Called once, atomically, before the first
+	// body byte. Audit data is operator-sensitive (user IDs, request
+	// payloads, error messages), so no-store is mandatory; the
+	// attachment hint is for browser-driven downloads.
+	writeExportHeaders := func() {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		w.Header().Set("Content-Disposition", `attachment; filename="audit.jsonl"`)
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusOK)
+		headerWritten = true
+	}
+
 	err := sl.Stream(r.Context(), f, func(ev audit.Event) error {
+		// Per-row ctx check so a client disconnect doesn't waste a
+		// full Postgres page (1000 rows) before the page-level ctx
+		// check fires inside Stream itself.
+		if err := r.Context().Err(); err != nil {
+			return err
+		}
 		if written >= exportCap {
 			// Bail by returning a sentinel; the closure can't write a
 			// trailer mid-stream once headers are out, so just stop.
@@ -350,6 +382,9 @@ func (p *PortalAPI) auditExport(w http.ResponseWriter, r *http.Request) {
 		// Payload is summary-only on this endpoint; clear any in-memory
 		// pointer set by the underlying logger before encoding.
 		ev.Payload = nil
+		if !headerWritten {
+			writeExportHeaders()
+		}
 		if err := enc.Encode(&ev); err != nil {
 			return err
 		}
@@ -361,16 +396,44 @@ func (p *PortalAPI) auditExport(w http.ResponseWriter, r *http.Request) {
 		}
 		return nil
 	})
-	if err != nil && !errors.Is(err, errExportCapped) {
-		// Headers are already out, so we can only log + truncate the
-		// stream. The client will see a partial response.
+	switch {
+	case err == nil, errors.Is(err, errExportCapped):
+		// Success path. Filter that matched zero rows still owes the
+		// client 200 OK with an empty body.
+		if !headerWritten {
+			writeExportHeaders()
+		}
+		if flusher != nil {
+			flusher.Flush()
+		}
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		// Client disconnect or request timeout. If headers haven't
+		// gone out we deliberately do NOT commit them (avoids
+		// implicit 200 OK when the client gave up); if they have,
+		// flush the partial response so the client sees what we got.
+		if headerWritten && flusher != nil {
+			flusher.Flush()
+		}
+	case !headerWritten:
+		// Real backend error before the first row. Headers haven't
+		// committed yet, so we can return a usable status. We log
+		// the wrapped error at WARN and return a generic message to
+		// the client to avoid leaking pgx / driver internals.
+		slog.Warn("audit: export stream failed before first row",
+			"err", err,
+		)
+		writeError(w, http.StatusInternalServerError,
+			fmt.Errorf("export stream failed (see server logs)"))
+	default:
+		// Mid-flight failure: headers already out, can only log and
+		// truncate. Client sees a partial response.
 		slog.Warn("audit: export stream failed mid-flight",
 			"err", err,
 			"written", written,
 		)
-	}
-	if flusher != nil {
-		flusher.Flush()
+		if flusher != nil {
+			flusher.Flush()
+		}
 	}
 }
 

@@ -169,6 +169,69 @@ func TestMemoryLogger_Query_TiedTimestampsAreStable(t *testing.T) {
 	}
 }
 
+func TestMemoryLogger_Query_ClampsAboveMaxQueryLimit(t *testing.T) {
+	// Backend-consistency: MemoryLogger and Postgres must agree on
+	// the upper-bound clamp. Without this clamp, test code that uses
+	// MemoryLogger as a stand-in for Postgres masks production
+	// behavior. Push more than MaxQueryLimit, ask for more; assert
+	// the cap holds.
+	m := NewMemoryLogger()
+	for i := 0; i < MaxQueryLimit+50; i++ {
+		_ = m.Log(context.Background(), Event{
+			ID:        string(rune('a' + (i % 26))),
+			ToolName:  "echo",
+			Timestamp: time.Now().UTC().Add(time.Duration(i) * time.Microsecond),
+			Success:   true,
+			Transport: "http",
+			Source:    "mcp",
+		})
+	}
+	got, _ := m.Query(context.Background(), QueryFilter{Limit: MaxQueryLimit + 9999})
+	if len(got) != MaxQueryLimit {
+		t.Errorf("got %d events with Limit=MaxQueryLimit+9999, want %d (clamp must enforce upper bound)",
+			len(got), MaxQueryLimit)
+	}
+}
+
+func TestMemoryLogger_CountAndStream_NotCappedAtQueryDefault(t *testing.T) {
+	// Regression: an earlier fix made Query default Limit=0 to 100. If
+	// Count or Stream route through Query (instead of using matchAll
+	// directly), they silently truncate at 100. Write more than 100
+	// events and verify both methods see all of them.
+	m := NewMemoryLogger()
+	const n = 250
+	now := time.Now().UTC()
+	for i := 0; i < n; i++ {
+		_ = m.Log(context.Background(), Event{
+			ID:        string(rune('a' + (i % 26))),
+			ToolName:  "echo",
+			Timestamp: now.Add(time.Duration(i) * time.Microsecond),
+			Success:   true,
+			Transport: "http",
+			Source:    "mcp",
+		})
+	}
+
+	got, err := m.Count(context.Background(), QueryFilter{})
+	if err != nil {
+		t.Fatalf("Count: %v", err)
+	}
+	if got != n {
+		t.Errorf("Count = %d, want %d (must not be capped at Query default)", got, n)
+	}
+
+	streamSeen := 0
+	if err := m.Stream(context.Background(), QueryFilter{}, func(Event) error {
+		streamSeen++
+		return nil
+	}); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	if streamSeen != n {
+		t.Errorf("Stream visited %d events, want %d (must not be capped at Query default)", streamSeen, n)
+	}
+}
+
 func TestMemoryLogger_Stream_IgnoresLimit(t *testing.T) {
 	// Per the StreamingLogger contract, f.Limit is ignored: Stream
 	// iterates the whole filtered set so callers can stop via a sentinel

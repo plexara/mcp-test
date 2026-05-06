@@ -121,8 +121,8 @@ per request; tighten the filter window for larger sets.
 
 `limit` and `offset` behave differently from `/events`:
 `limit` clamps the total exported row count (still bounded by
-the 100,000 hard cap), and `offset` is ignored — exports always
-start from the head of the matching set. Use `from` / `to` to
+the 100,000 hard cap), and `offset` is ignored. Exports always
+start from the head of the matching set; use `from` / `to` to
 window in time instead.
 
 All of these accept either the session cookie (browser) or

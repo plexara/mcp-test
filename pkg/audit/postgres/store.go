@@ -496,6 +496,16 @@ func breakdownColumn(dim string) string {
 	return ""
 }
 
+// truncateForLog returns s capped at max bytes, with an ellipsis
+// suffix when truncated. Used by the JSON-filter compile-error log so
+// a malformed path doesn't blow out the slog line.
+func truncateForLog(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "..."
+}
+
 // jsonFilterColumn maps a QueryFilter.JSONPathFilter Source into the
 // audit_payloads JSONB column name. Unknown sources return "" and are
 // skipped at the call site.
@@ -585,6 +595,18 @@ func buildSelect(f audit.QueryFilter, count bool) (string, []any) {
 		}
 		b, err := json.Marshal(doc)
 		if err != nil {
+			// Silently dropping the filter would broaden the result
+			// set without telling the operator. Log and skip; the
+			// filter inputs are constructed from sanitized URL parts
+			// plus ParseJSONFilterValue output, so this branch should
+			// be unreachable in practice. We log the joined path
+			// (capped) so an operator can correlate against the
+			// failing request.
+			slog.Warn("audit: json filter compile failed; filter dropped",
+				"source", jf.Source,
+				"path", truncateForLog(strings.Join(jf.Path, "."), 256),
+				"err", err,
+			)
 			continue
 		}
 		conds = append(conds, fmt.Sprintf(
@@ -595,16 +617,33 @@ func buildSelect(f audit.QueryFilter, count bool) (string, []any) {
 		i++
 	}
 
-	// has= filters: shorthand for "this payload column is populated".
-	// Validated against AllowedHasKeys at the HTTP layer; safe to splice
-	// the column name verbatim into SQL since it's not user input.
+	// has= filters: shorthand for "this payload column is non-empty".
+	// We treat NULL, empty-JSONB forms ('{}'::jsonb, '[]'::jsonb,
+	// 'null'::jsonb), and empty TEXT ('') as "missing"; only a payload
+	// column with actual content counts. This matches MemoryLogger's
+	// len/IsZero-based check on every allowlisted column type
+	// (request_* / response_* / notifications are JSONB; replayed_from
+	// is TEXT) so the two backends agree on edge cases.
+	//
+	// The empty-string entry covers the TEXT column case (replayed_from)
+	// where '' is a valid stored value but semantically "missing." For
+	// JSONB columns, '' isn't a valid stored value so the entry is a
+	// harmless extra match.
+	//
+	// Validated against AllowedHasKeys at the HTTP layer; the column
+	// name is allow-listed so the verbatim splice is safe. Note: this
+	// loop deliberately does NOT increment `i`; no $N placeholder is
+	// bound here. A future maintainer adding a bound argument must
+	// increment `i` to keep LIMIT/OFFSET aligned.
 	for _, k := range f.HasKeys {
 		if !audit.IsAllowedHasKey(k) {
 			continue
 		}
 		conds = append(conds, fmt.Sprintf(
-			"EXISTS (SELECT 1 FROM audit_payloads p WHERE p.event_id = audit_events.id AND p.%s IS NOT NULL)",
-			k,
+			"EXISTS (SELECT 1 FROM audit_payloads p WHERE p.event_id = audit_events.id "+
+				"AND p.%s IS NOT NULL "+
+				"AND p.%s::text NOT IN ('{}', '[]', 'null', ''))",
+			k, k,
 		))
 	}
 
@@ -617,9 +656,16 @@ func buildSelect(f audit.QueryFilter, count bool) (string, []any) {
 		return "SELECT count(*) FROM audit_events" + where, args
 	}
 
+	// Two distinct cases, kept separate so the doc on audit.MaxQueryLimit
+	// ("larger values get silently reduced") is honored. A caller asking
+	// for too much is clamped to MaxQueryLimit, not collapsed back to the
+	// page-size default; an unset limit gets the page-size default.
 	limit := f.Limit
-	if limit <= 0 || limit > audit.MaxQueryLimit {
+	if limit <= 0 {
 		limit = 100
+	}
+	if limit > audit.MaxQueryLimit {
+		limit = audit.MaxQueryLimit
 	}
 	args = append(args, limit, f.Offset)
 	return "SELECT id, ts, duration_ms, " +

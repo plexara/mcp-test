@@ -47,12 +47,6 @@ func JSONFilterToContainment(path []string, value any) any {
 	return cur
 }
 
-// JSONFilterToBytes marshals JSONFilterToContainment(path, value) to
-// JSON bytes, suitable to pass as a $N::jsonb argument.
-func JSONFilterToBytes(path []string, value any) ([]byte, error) {
-	return json.Marshal(JSONFilterToContainment(path, value))
-}
-
 // MatchJSONPath reports whether m contains a value at the given dotted
 // path equal to want, using the same type detection as
 // ParseJSONFilterValue. Used by MemoryLogger's filter loop. Comparison
@@ -110,13 +104,19 @@ func numericEq(a float64, b any) bool {
 		return a == bv
 	case float32:
 		return a == float64(bv)
-	case int64:
+	case int8:
+		return a == float64(bv)
+	case int16:
 		return a == float64(bv)
 	case int32:
 		return a == float64(bv)
+	case int64:
+		return a == float64(bv)
 	case int:
 		return a == float64(bv)
-	case uint:
+	case uint8:
+		return a == float64(bv)
+	case uint16:
 		return a == float64(bv)
 	case uint32:
 		return a == float64(bv)
@@ -125,6 +125,8 @@ func numericEq(a float64, b any) bool {
 		// best we can do without bigint, and audit numbers are nowhere
 		// near 2^53.
 		return a == float64(bv)
+	case uint:
+		return a == float64(bv)
 	case json.Number:
 		bf, _ := bv.Float64()
 		return a == bf
@@ -132,22 +134,32 @@ func numericEq(a float64, b any) bool {
 	return false
 }
 
-// IsAllowedHasKey reports whether key is one of AllowedHasKeys.
+// IsAllowedHasKey reports whether key is an allowlisted has= column.
+// Implemented as a closed switch (not a slice iteration) so the
+// AllowedHasKeys exported var cannot be mutated by an importing package
+// to widen what gets spliced into the verbatim SQL column reference in
+// buildSelect. The slice stays exported for documentation generators
+// and reflection callers; the gate is the function.
 func IsAllowedHasKey(key string) bool {
-	for _, k := range AllowedHasKeys {
-		if k == key {
-			return true
-		}
+	switch key {
+	case "request_params",
+		"request_headers",
+		"response_result",
+		"response_error",
+		"notifications",
+		"replayed_from":
+		return true
 	}
 	return false
 }
 
-// IsAllowedJSONSource reports whether src is one of AllowedJSONSources.
+// IsAllowedJSONSource reports whether src is an allowlisted source.
+// Closed switch for the same reason as IsAllowedHasKey: defense against
+// mutation of the exported AllowedJSONSources slice.
 func IsAllowedJSONSource(src string) bool {
-	for _, s := range AllowedJSONSources {
-		if s == src {
-			return true
-		}
+	switch src {
+	case "param", "response", "header":
+		return true
 	}
 	return false
 }

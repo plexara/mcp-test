@@ -285,6 +285,63 @@ func TestStore_JSONFilters_AndHasKeys(t *testing.T) {
 	}
 }
 
+func TestStore_Query_LimitClamping(t *testing.T) {
+	// buildSelect has two branches for Limit:
+	//   - Limit <= 0: default to 100
+	//   - Limit > MaxQueryLimit: clamp to MaxQueryLimit
+	// Verify both, plus a passing-through case in the middle, against
+	// real Postgres so a regression that collapses the branches surfaces.
+	ctx := context.Background()
+	url := startPostgres(ctx, t)
+	if err := migrate.Up(url); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	pool, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatalf("pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	store := auditpg.New(pool)
+
+	// Need MaxQueryLimit + 50 events to exercise the clamp.
+	const stored = audit.MaxQueryLimit + 50
+	now := time.Now().UTC()
+	for i := 0; i < stored; i++ {
+		ev := audit.Event{
+			ID:        fmt.Sprintf("evt-%05d", i),
+			Timestamp: now.Add(time.Duration(i) * time.Millisecond),
+			ToolName:  "echo",
+			Transport: "http",
+			Source:    "mcp",
+			Success:   true,
+		}
+		if err := store.Log(ctx, ev); err != nil {
+			t.Fatalf("Log: %v", err)
+		}
+	}
+
+	cases := []struct {
+		name  string
+		limit int
+		want  int
+	}{
+		{"unset (Limit=0) defaults to 100", 0, 100},
+		{"explicit small Limit honored", 25, 25},
+		{"Limit at MaxQueryLimit honored", audit.MaxQueryLimit, audit.MaxQueryLimit},
+		{"Limit above MaxQueryLimit clamped", audit.MaxQueryLimit + 9999, audit.MaxQueryLimit},
+	}
+	for _, c := range cases {
+		got, err := store.Query(ctx, audit.QueryFilter{Limit: c.limit})
+		if err != nil {
+			t.Errorf("%s: %v", c.name, err)
+			continue
+		}
+		if len(got) != c.want {
+			t.Errorf("%s: got %d, want %d", c.name, len(got), c.want)
+		}
+	}
+}
+
 func TestStore_Stream_TiedTimestampsNoDuplicatesOrSkips(t *testing.T) {
 	// Tied timestamps + OFFSET pagination is the worst case: without an
 	// id tiebreaker on ORDER BY, the same row can appear in two
@@ -377,6 +434,21 @@ func TestStore_Stream_PagesThroughCursor(t *testing.T) {
 	}
 	if seen != n {
 		t.Errorf("Stream visited %d events, want %d", seen, n)
+	}
+
+	// Per StreamingLogger contract, f.Offset is ignored: Stream walks
+	// the whole filtered set even if the caller passes a non-zero
+	// Offset. Without this assertion, a regression that drops the
+	// page.Offset = 0 line would silently truncate exports.
+	seenWithOffset := 0
+	if err := store.Stream(ctx, audit.QueryFilter{Offset: 500}, func(audit.Event) error {
+		seenWithOffset++
+		return nil
+	}); err != nil {
+		t.Fatalf("Stream with Offset=500: %v", err)
+	}
+	if seenWithOffset != n {
+		t.Errorf("Stream with Offset=500 visited %d, want %d (Offset must be ignored)", seenWithOffset, n)
 	}
 }
 

@@ -112,14 +112,19 @@ func (a *AsyncLogger) GetPayload(ctx context.Context, eventID string) (*Payload,
 // Falls back to a buffered Query() call capped at MaxQueryLimit when not,
 // so a Logger that lacks streaming still produces a bounded result.
 //
-// The fallback cap matches the underlying-backend cap (audit.MaxQueryLimit)
-// so a wrapper can't promise N rows and have the backend silently deliver
-// fewer. Callers needing more than MaxQueryLimit must wire a Logger that
+// The fallback enforces the cap inside this method, not by trusting the
+// inner Query() to honor f.Limit, because some Logger implementations
+// (test fakes, custom backends) ignore Limit. Stop iterating after
+// MaxQueryLimit events regardless of how many inner returned.
+//
+// Callers needing more than MaxQueryLimit must wire a Logger that
 // implements StreamingLogger directly.
 func (a *AsyncLogger) Stream(ctx context.Context, f QueryFilter, fn func(Event) error) error {
 	if sl, ok := a.inner.(StreamingLogger); ok {
 		return sl.Stream(ctx, f, fn)
 	}
+	// Set f.Limit as a hint for backends that honor it; we don't rely
+	// on it. The hard cap below is the source of truth.
 	if f.Limit <= 0 || f.Limit > MaxQueryLimit {
 		f.Limit = MaxQueryLimit
 	}
@@ -127,7 +132,10 @@ func (a *AsyncLogger) Stream(ctx context.Context, f QueryFilter, fn func(Event) 
 	if err != nil {
 		return err
 	}
-	for _, ev := range evs {
+	for i, ev := range evs {
+		if i >= MaxQueryLimit {
+			return nil
+		}
 		if err := fn(ev); err != nil {
 			return err
 		}

@@ -65,18 +65,20 @@ Behind the cookie or `X-API-Key` / `Authorization: Bearer`.
 | --- | --- | --- |
 | `param.<dotted.path>=<value>` | `audit_payloads.request_params @> {"<path>": <value>}` | `?param.user.id=alice` |
 | `response.<dotted.path>=<value>` | `audit_payloads.response_result @> {"<path>": <value>}` | `?response.isError=true` |
-| `header.<name>=<value>` | `audit_payloads.request_headers @> {"<name>": ["<value>"]}` | `?header.User-Agent=curl/8.0` |
-| `has=<column>` | `audit_payloads.<column> IS NOT NULL` | `?has=response_error` |
+| `header.<name>=<value>` | `audit_payloads.request_headers @> {"<name>": ["<value>"]}` (single-segment name only) | `?header.User-Agent=curl/8.0` |
+| `has=<column>` | `audit_payloads.<column>` is `IS NOT NULL` and the column's text representation is not one of `'{}'`, `'[]'`, `'null'`, or `''` | `?has=response_error` |
 
-Allowed `has=` columns: `request_params`, `request_headers`, `response_result`, `response_error`, `notifications`, `replayed_from`. Anything else is silently dropped.
+Allowed `has=` columns: `request_params`, `request_headers`, `response_result`, `response_error`, `notifications`, `replayed_from`. Anything else is silently dropped. Note: a JSONB column literally storing the JSON string `""` (rendered as `'""'::text`, four characters) does pass the filter; the exclusion list is canonical empty containers and an empty TEXT column, not "all logically empty values."
 
 **Value type detection.** Bare values on `param.*` and `response.*` filters are type-detected before the containment doc is built: `true` / `false` become JSON booleans, integers and floats become numbers, everything else is a string. Force a literal string with quotes: `?param.code="200"` matches the JSON string `"200"`, while `?param.code=200` matches the JSON number `200`. **Header values** (`header.*`) are always treated as strings since HTTP header values are strings on the wire; type detection does not apply there.
 
 **Header name canonicalization.** `header.<name>` canonicalizes the header name to the standard Go form before matching, so `?header.user-agent=curl/8.0` matches the same row as `?header.User-Agent=curl/8.0`.
 
+**Header paths must be a single segment.** `?header.X-Foo.bar=v` is silently dropped at parse time; HTTP headers are flat name → values, no nesting. Use `param.*` or `response.*` for nested-path matches.
+
 **Empty-segment paths.** `?param.a..b=v` (a path with an empty segment) cannot match any real payload and is silently dropped at parse time.
 
-**Index use.** The `request_params` and `response_result` columns carry `jsonb_path_ops` GIN indexes; the `@>` operator hits them directly. `request_headers` is unindexed today, so `header.*` filters scan the matching subset and are best paired with a time-range filter. The `has=` filter is a NOT-NULL check on a stored boolean / nullable column, no index needed.
+**Index use.** The `request_params` and `response_result` columns carry `jsonb_path_ops` GIN indexes; the `@>` operator hits them directly. `request_headers` is unindexed today, so `header.*` filters scan the matching subset and are best paired with a time-range filter. The `has=` filter is a NOT-NULL plus non-empty-content check on a JSONB or TEXT column; the planner can use a partial index on the column when present, otherwise it scans.
 
 ## Admin API (mutating)
 

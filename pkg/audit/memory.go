@@ -33,9 +33,13 @@ func (m *MemoryLogger) Log(_ context.Context, ev Event) error {
 // UserID, From, To, Success, and Limit are honored; other filter fields are
 // ignored. Sufficient for tests; the Postgres store covers the full filter
 // surface.
-func (m *MemoryLogger) Query(_ context.Context, f QueryFilter) ([]Event, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+// matchAll applies every QueryFilter predicate EXCEPT Limit/Offset and
+// returns the matching events in canonical Query order (ts DESC, id ASC).
+// Shared by Query, Count, and Stream so all three agree on filter
+// semantics and ordering regardless of pagination.
+//
+// Caller must hold m.mu.
+func (m *MemoryLogger) matchAll(f QueryFilter) []Event {
 	out := make([]Event, 0, len(m.events))
 	for _, ev := range m.events {
 		if !matchesFilter(ev, f) {
@@ -52,22 +56,43 @@ func (m *MemoryLogger) Query(_ context.Context, f QueryFilter) ([]Event, error) 
 		}
 		return out[i].ID < out[j].ID
 	})
-	if f.Limit > 0 && len(out) > f.Limit {
-		out = out[:f.Limit]
+	return out
+}
+
+// Query returns matching events ordered ts DESC, id ASC, with the
+// limit-clamp rules described inline. Calls matchAll to share filter
+// semantics with Count and Stream.
+func (m *MemoryLogger) Query(_ context.Context, f QueryFilter) ([]Event, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := m.matchAll(f)
+	// Limit-clamp rules, mirroring Postgres buildSelect:
+	//   Limit <= 0 (unset / negative) -> default page size (100)
+	//   0 < Limit <= MaxQueryLimit    -> honored as given
+	//   Limit > MaxQueryLimit         -> clamped to MaxQueryLimit
+	// Count and Stream do NOT route through here; they use matchAll
+	// directly so the page-size default doesn't truncate them.
+	limit := f.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > MaxQueryLimit {
+		limit = MaxQueryLimit
+	}
+	if len(out) > limit {
+		out = out[:limit]
 	}
 	return out, nil
 }
 
-// Count returns the number of matching events, ignoring Limit/Offset so
-// pagination metadata is correct.
-func (m *MemoryLogger) Count(ctx context.Context, f QueryFilter) (int64, error) {
-	f.Limit = 0
-	f.Offset = 0
-	evs, err := m.Query(ctx, f)
-	if err != nil {
-		return 0, err
-	}
-	return int64(len(evs)), nil
+// Count returns the number of matching events. Ignores f.Limit and
+// f.Offset so pagination metadata is correct (Postgres uses
+// SELECT count(*); MemoryLogger uses len() over matchAll). Routing
+// through Query would silently cap at the page-size default.
+func (m *MemoryLogger) Count(_ context.Context, f QueryFilter) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return int64(len(m.matchAll(f))), nil
 }
 
 // Stream calls fn once per matching event, in the same order Query would
@@ -75,20 +100,17 @@ func (m *MemoryLogger) Count(ctx context.Context, f QueryFilter) (int64, error) 
 // result set into memory; for the in-memory logger the savings are
 // theoretical, but the contract matches the Postgres store's cursor.
 //
-// Per the StreamingLogger contract, f.Limit is ignored: Stream iterates
-// the whole filtered set, and callers that need a stop-after-N stop by
-// returning a sentinel error from fn. We strip Limit / Offset before
-// delegating to Query so the contract is honored regardless of caller.
+// Per the StreamingLogger contract, f.Limit and f.Offset are ignored:
+// Stream iterates the whole filtered set; callers stop early by
+// returning a sentinel error from fn. Uses matchAll directly so the
+// 100-row page-size default in Query never reaches this path.
 func (m *MemoryLogger) Stream(ctx context.Context, f QueryFilter, fn func(Event) error) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	f.Limit = 0
-	f.Offset = 0
-	evs, err := m.Query(ctx, f)
-	if err != nil {
-		return err
-	}
+	m.mu.Lock()
+	evs := m.matchAll(f)
+	m.mu.Unlock()
 	for _, ev := range evs {
 		if err := ctx.Err(); err != nil {
 			return err
