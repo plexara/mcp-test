@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"reflect"
 	"strings"
 	"time"
 
@@ -121,26 +123,26 @@ func insertPayload(ctx context.Context, tx pgx.Tx, eventID string, p *audit.Payl
 	_, err = tx.Exec(ctx, `
 		INSERT INTO audit_payloads (
 			event_id,
-			jsonrpc_method, jsonrpc_id,
+			jsonrpc_method,
 			request_params, request_size_bytes, request_truncated,
-			request_headers, request_method, request_path, request_remote_addr,
+			request_headers, request_remote_addr,
 			response_result, response_error, response_size_bytes, response_truncated,
-			notifications, replayed_from
+			notifications, notifications_truncated, replayed_from
 		) VALUES (
 			$1,
-			$2, $3,
-			$4, $5, $6,
-			$7, $8, $9, $10,
-			$11, $12, $13, $14,
-			$15, $16
+			$2,
+			$3, $4, $5,
+			$6, $7,
+			$8, $9, $10, $11,
+			$12, $13, $14
 		)
 	`,
 		eventID,
-		p.JSONRPCMethod, p.JSONRPCID,
+		p.JSONRPCMethod,
 		requestParams, p.RequestSizeBytes, p.RequestTruncated,
-		requestHeaders, p.RequestMethod, p.RequestPath, p.RequestRemoteAddr,
+		requestHeaders, p.RequestRemoteAddr,
 		responseResult, responseError, p.ResponseSizeBytes, p.ResponseTruncated,
-		notifications, replayedFrom,
+		notifications, p.NotificationsTruncated, replayedFrom,
 	)
 	if err != nil {
 		return fmt.Errorf("insert audit payload: %w", err)
@@ -148,50 +150,55 @@ func insertPayload(ctx context.Context, tx pgx.Tx, eventID string, p *audit.Payl
 	return nil
 }
 
-// marshalJSONB returns the JSON encoding of v, or nil for nil/empty inputs
-// so the column stores SQL NULL (which is friendlier to JSONB queries
-// than a literal "null").
+// marshalJSONB returns the JSON encoding of v, or nil for nil-or-empty
+// inputs so the column stores SQL NULL (which is friendlier to JSONB
+// queries than a literal "null"). Empty-detection uses reflection so it
+// handles every map / slice / array type uniformly: no fragile type
+// switch to maintain as Payload grows.
 func marshalJSONB(v any) ([]byte, error) {
 	if v == nil {
 		return nil, nil
 	}
-	switch x := v.(type) {
-	case map[string]any:
-		if len(x) == 0 {
-			return nil, nil
-		}
-	case map[string][]string:
-		if len(x) == 0 {
-			return nil, nil
-		}
-	case []audit.Notification:
-		if len(x) == 0 {
-			return nil, nil
-		}
+	if isEmptyValue(v) {
+		return nil, nil
 	}
 	return json.Marshal(v)
 }
 
+// isEmptyValue reports whether v is the zero-length form of a
+// container type (map, slice, array, channel) or a nil pointer.
+// Anything else is considered non-empty.
+func isEmptyValue(v any) bool {
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Map, reflect.Slice, reflect.Array, reflect.Chan, reflect.String:
+		return rv.Len() == 0
+	case reflect.Pointer, reflect.Interface:
+		return rv.IsNil()
+	}
+	return false
+}
+
 // GetPayload returns the audit_payloads row for the given event, or
 // (nil, nil) if no payload was captured. Errors other than "no rows" are
-// returned.
+// returned. Per-column JSON unmarshal failures (corrupt JSONB) are
+// logged at WARN and the field stays empty so the rest of the payload
+// can still render.
 func (s *Store) GetPayload(ctx context.Context, eventID string) (*audit.Payload, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT
 			COALESCE(jsonrpc_method, ''),
-			COALESCE(jsonrpc_id, ''),
 			request_params,
 			request_size_bytes,
 			request_truncated,
 			request_headers,
-			COALESCE(request_method, ''),
-			COALESCE(request_path, ''),
 			COALESCE(request_remote_addr, ''),
 			response_result,
 			response_error,
 			response_size_bytes,
 			response_truncated,
 			notifications,
+			notifications_truncated,
 			COALESCE(replayed_from, '')
 		FROM audit_payloads
 		WHERE event_id = $1
@@ -207,19 +214,17 @@ func (s *Store) GetPayload(ctx context.Context, eventID string) (*audit.Payload,
 	)
 	err := row.Scan(
 		&p.JSONRPCMethod,
-		&p.JSONRPCID,
 		&paramsB,
 		&p.RequestSizeBytes,
 		&p.RequestTruncated,
 		&headersB,
-		&p.RequestMethod,
-		&p.RequestPath,
 		&p.RequestRemoteAddr,
 		&resultB,
 		&errB,
 		&p.ResponseSizeBytes,
 		&p.ResponseTruncated,
 		&notificationsB,
+		&p.NotificationsTruncated,
 		&p.ReplayedFrom,
 	)
 	if err != nil {
@@ -228,22 +233,30 @@ func (s *Store) GetPayload(ctx context.Context, eventID string) (*audit.Payload,
 		}
 		return nil, err
 	}
-	if len(paramsB) > 0 {
-		_ = json.Unmarshal(paramsB, &p.RequestParams)
-	}
-	if len(headersB) > 0 {
-		_ = json.Unmarshal(headersB, &p.RequestHeaders)
-	}
-	if len(resultB) > 0 {
-		_ = json.Unmarshal(resultB, &p.ResponseResult)
-	}
-	if len(errB) > 0 {
-		_ = json.Unmarshal(errB, &p.ResponseError)
-	}
-	if len(notificationsB) > 0 {
-		_ = json.Unmarshal(notificationsB, &p.Notifications)
-	}
+	unmarshalCol(eventID, "request_params", paramsB, &p.RequestParams)
+	unmarshalCol(eventID, "request_headers", headersB, &p.RequestHeaders)
+	unmarshalCol(eventID, "response_result", resultB, &p.ResponseResult)
+	unmarshalCol(eventID, "response_error", errB, &p.ResponseError)
+	unmarshalCol(eventID, "notifications", notificationsB, &p.Notifications)
 	return &p, nil
+}
+
+// unmarshalCol decodes a JSONB column into dest. Empty input is a no-op.
+// Decode failures (corrupt JSONB written by a buggy older binary) are
+// logged at WARN with the event ID + column name so operators can spot
+// them; the field stays empty so the rest of the payload still renders.
+func unmarshalCol(eventID, column string, data []byte, dest any) {
+	if len(data) == 0 {
+		return
+	}
+	if err := json.Unmarshal(data, dest); err != nil {
+		slog.Warn("audit: corrupt JSONB column",
+			"event_id", eventID,
+			"column", column,
+			"err", err,
+			"bytes", len(data),
+		)
+	}
 }
 
 // Query returns matching events. ORDER is by ts DESC unless f.OrderDesc is false.

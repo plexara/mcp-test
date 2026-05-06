@@ -3,10 +3,13 @@ package httpsrv
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/plexara/mcp-test/pkg/audit"
 	"github.com/plexara/mcp-test/pkg/auth"
@@ -174,16 +177,26 @@ func (p *PortalAPI) auditEvents(w http.ResponseWriter, r *http.Request) {
 // Response shape mirrors the Event JSON marshaling; when payload was
 // captured, it appears under the "payload" key.
 func (p *PortalAPI) auditEventDetail(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if id == "" {
+	rawID := r.PathValue("id")
+	if rawID == "" {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("event id required"))
 		return
 	}
+	// Audit event IDs are UUIDs minted by NewEvent. Reject anything else
+	// at the boundary; we then log only the canonicalized uuid.String()
+	// rather than the raw path value so gosec's taint analysis can see
+	// the user-controlled string is no longer in the slog.Warn path.
+	parsed, err := uuid.Parse(rawID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("event id is not a valid uuid"))
+		return
+	}
+	id := parsed.String()
 
-	// The Logger interface doesn't have a single-event lookup; reuse Query
-	// with a bounded filter and pluck the matching row. This is O(scan)
-	// today; if event detail becomes a hot path we can add a primary-key
-	// fetch to the interface.
+	// The Logger interface doesn't expose a typed single-event lookup;
+	// reuse Query with EventID set and Limit:1. The Postgres store
+	// resolves this to a primary-key index lookup; the in-memory logger
+	// scans its slice (fine for tests).
 	events, err := p.audit.Query(r.Context(), audit.QueryFilter{Limit: 1, EventID: id})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
@@ -202,11 +215,17 @@ func (p *PortalAPI) auditEventDetail(w http.ResponseWriter, r *http.Request) {
 	ev.Payload = nil
 	if pl, ok := p.audit.(audit.PayloadLogger); ok {
 		payload, perr := pl.GetPayload(r.Context(), id)
-		if perr == nil {
+		if perr != nil {
+			// Soft-fail: the summary is real, only the detail is
+			// unavailable. Log at WARN with the event ID so operators
+			// can chase the cause without the request itself failing.
+			// id is a canonical uuid.UUID.String() form (validated
+			// above); gosec's transitive taint propagation flags this
+			// regardless, so #nosec is correct here.
+			slog.Warn("audit: payload fetch failed", "event_id", id, "err", perr) // #nosec G706 -- id is a validated, canonicalized UUID; cannot carry log-injection bytes.
+		} else {
 			ev.Payload = payload
 		}
-		// Soft-fail on perr: the summary is real, only detail is
-		// unavailable; the binary's logs carry the error.
 	}
 
 	writeJSON(w, http.StatusOK, ev)

@@ -128,7 +128,7 @@ func Audit(chain *auth.Chain, logger audit.Logger, redactKeys []string, toolGrou
 				ev.WithResult(false, authErr.Error(), time.Since(start).Milliseconds())
 				ev.ErrorCategory = "auth"
 				if o.capturePayloads {
-					ev.WithPayload(buildPayload(ctx, req, params, redactKeys, nil, authErr, o, nil))
+					ev.WithPayload(buildPayload(ctx, method, params, redactKeys, nil, authErr, "auth", o, nil))
 				}
 				_ = logger.Log(ctx, *ev)
 				return nil, authErr
@@ -136,20 +136,38 @@ func Audit(chain *auth.Chain, logger audit.Logger, redactKeys []string, toolGrou
 
 			ev.WithParameters(audit.SanitizeParameters(params, redactKeys))
 
+			// Seed a notification recorder onto ctx if payload capture is
+			// on. The Notifications() sending middleware reads this off
+			// ctx and appends as the tool fires NotifyProgress / Log /
+			// other notifications/* methods. The recorder applies the
+			// same redactKeys as the rest of the audit pipeline, so a
+			// tool that emits a sensitive value through NotifyProgress
+			// or LogMessage cannot bypass the operator's redact list.
+			var recorder *notificationRecorder
+			if o.capturePayloads {
+				recorder = newNotificationRecorder(o.maxNotifications, redactKeys)
+				ctx = withRecorder(ctx, recorder)
+			}
+
 			res, err := next(ctx, method, req)
 			ev.WithResult(err == nil, errString(err), time.Since(start).Milliseconds())
 			var cr *mcp.CallToolResult
+			errCategory := ""
 			if r, ok := res.(*mcp.CallToolResult); ok && r != nil {
 				cr = r
 				chars, blocks := measureResult(cr)
 				ev.WithResponseSize(chars, blocks)
 				if cr.IsError && err == nil {
 					ev.Success = false
-					ev.ErrorCategory = "tool"
+					errCategory = "tool"
 				}
 			}
+			if errCategory == "" && err != nil {
+				errCategory = "handler"
+			}
+			ev.ErrorCategory = errCategory
 			if o.capturePayloads {
-				ev.WithPayload(buildPayload(ctx, req, params, redactKeys, cr, err, o, nil))
+				ev.WithPayload(buildPayload(ctx, method, params, redactKeys, cr, err, errCategory, o, recorder.Snapshot()))
 			}
 			_ = logger.Log(ctx, *ev)
 			return res, err
@@ -158,6 +176,10 @@ func Audit(chain *auth.Chain, logger audit.Logger, redactKeys []string, toolGrou
 }
 
 // buildPayload assembles the full audit_payloads row for one tools/call.
+// errCategory is "auth", "tool", "handler", or "" for success and is
+// stored on the response_error blob so the portal can filter without
+// string-matching against the message.
+//
 // The notifications slice is captured by the caller via a session
 // recorder (see notification.go); pass nil when no recording was wired.
 //
@@ -168,16 +190,17 @@ func Audit(chain *auth.Chain, logger audit.Logger, redactKeys []string, toolGrou
 // HeaderCapture middleware).
 func buildPayload(
 	ctx context.Context,
-	_ mcp.Request,
+	method string,
 	rawParams map[string]any,
 	redactKeys []string,
 	cr *mcp.CallToolResult,
 	callErr error,
+	errCategory string,
 	opts auditOptions,
 	notifications []audit.Notification,
 ) *audit.Payload {
 	p := &audit.Payload{
-		JSONRPCMethod:     "tools/call",
+		JSONRPCMethod:     method,
 		RequestRemoteAddr: auth.GetRemoteAddr(ctx),
 	}
 
@@ -218,28 +241,77 @@ func buildPayload(
 	}
 
 	// Errors land in response_error so the portal can render them
-	// distinct from a tool that returned IsError=true.
+	// distinct from a tool that returned IsError=true. category lets
+	// the portal filter ("show me only auth rejects") without string-
+	// matching against the message.
 	if callErr != nil {
-		p.ResponseError = map[string]any{
+		errPayload := map[string]any{
 			"message": callErr.Error(),
 		}
+		if errCategory != "" {
+			errPayload["category"] = errCategory
+		}
+		p.ResponseError = errPayload
 	}
 
-	// Notifications captured by the recorder, capped per opts.
+	// Notifications: the recorder already capped count at Append time.
+	// Apply a byte cap here too: a LogMessage carries an arbitrary
+	// `data any` blob, so a small count of notifications can still
+	// exceed maxPayloadBytes. Trim from the tail until the slice fits;
+	// flag truncation if anything was dropped.
 	if len(notifications) > 0 {
-		max := opts.maxNotifications
-		if max > 0 && len(notifications) > max {
-			notifications = notifications[:max]
-		}
+		notifications, p.NotificationsTruncated = fitNotifications(notifications, opts.maxPayloadBytes)
 		p.Notifications = notifications
 	}
 
 	return p
 }
 
+// fitNotifications trims trailing entries until the slice's JSON encoding
+// fits in max bytes. Returns the surviving prefix and whether anything
+// was dropped. A non-positive max means "no limit". An empty input is a
+// pass-through.
+//
+// Single linear pass: marshal each entry once, accumulate, stop the
+// moment the running size would exceed max. Cheaper and simpler than
+// the prior binary-search version which re-marshaled growing prefixes.
+// Overhead per entry is bounded by the entry's own JSON size, which is
+// already capped by the recorder's count cap and the upstream payload
+// byte cap.
+func fitNotifications(in []audit.Notification, max int) ([]audit.Notification, bool) {
+	if len(in) == 0 || max <= 0 {
+		return in, false
+	}
+	const brackets = 2 // "[" + "]"
+	running := brackets
+	for i, n := range in {
+		b, err := json.Marshal(n)
+		if err != nil {
+			// A single bad entry shouldn't poison the whole slice; drop
+			// it and any tail by reporting truncation at this index.
+			return in[:i], true
+		}
+		if i > 0 {
+			running++ // ","
+		}
+		running += len(b)
+		if running > max {
+			return in[:i], true
+		}
+	}
+	return in, false
+}
+
 // callToolResultToMap renders a CallToolResult in the same shape the
 // MCP SDK serializes to the wire, so portal consumers can iterate
 // content blocks by type without reflection on Go-only types.
+//
+// Known content types (text/image/audio) are projected into a flat
+// {type, ...} map. Anything else falls through to a JSON round-trip via
+// the type's own MarshalJSON; the resulting map is preserved verbatim
+// (with a defensive type tag injected if the marshal didn't carry one)
+// so resource content, embedded resources, and any future content
+// kinds are still inspectable in the portal.
 func callToolResultToMap(cr *mcp.CallToolResult) map[string]any {
 	out := map[string]any{
 		"isError": cr.IsError,
@@ -265,10 +337,7 @@ func callToolResultToMap(cr *mcp.CallToolResult) map[string]any {
 				"data":     v.Data,
 			})
 		default:
-			blocks = append(blocks, map[string]any{
-				"type":  "unknown",
-				"shape": "non-textual content block",
-			})
+			blocks = append(blocks, contentToGenericMap(c))
 		}
 	}
 	out["content"] = blocks
@@ -276,6 +345,39 @@ func callToolResultToMap(cr *mcp.CallToolResult) map[string]any {
 		out["structuredContent"] = cr.StructuredContent
 	}
 	return out
+}
+
+// contentToGenericMap round-trips a content block through JSON. The MCP
+// SDK's content types implement json.Marshaler with the wire-shape
+// "type" tag, so the resulting map is the same thing a peer client
+// would receive. If marshal fails (it shouldn't for SDK types), we
+// surface the failure rather than dropping the block.
+//
+// Sentinel "type" values distinguish the three failure modes so the
+// portal can render them differently and operators can grep for them:
+//   - "_marshal_error": the SDK content's MarshalJSON returned an error
+//   - "_unmarshal_error": marshal succeeded but the bytes weren't an object
+//   - "_no_type": the SDK marshaled the content without a "type" field
+func contentToGenericMap(c mcp.Content) map[string]any {
+	b, err := json.Marshal(c)
+	if err != nil {
+		return map[string]any{
+			"type":          "_marshal_error",
+			"marshal_error": err.Error(),
+		}
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		return map[string]any{
+			"type":            "_unmarshal_error",
+			"unmarshal_error": err.Error(),
+			"raw":             string(b),
+		}
+	}
+	if _, hasType := m["type"]; !hasType {
+		m["type"] = "_no_type"
+	}
+	return m
 }
 
 // jsonSizeWithin reports the JSON byte size of v and whether it falls

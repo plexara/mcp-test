@@ -158,6 +158,270 @@ func TestAudit_PayloadCapture_HeadersOptIn(t *testing.T) {
 	}
 }
 
+func TestAudit_PayloadCapture_PreservesNonTextContent(t *testing.T) {
+	// An EmbeddedResource block (i.e. not text/image/audio) must fall
+	// through callToolResultToMap's JSON-marshal path so the actual
+	// resource data lands in the payload row, not a "non-textual block"
+	// placeholder. Regression coverage for M-2 in the PR review.
+	mem := audit.NewMemoryLogger()
+	chain := auth.NewChain(true, nil, nil)
+	mw := Audit(chain, mem, nil, nil, WithPayloadCapture(0))
+
+	wrapped := mw((&fakeMethodHandler{
+		res: &mcp.CallToolResult{Content: []mcp.Content{
+			&mcp.EmbeddedResource{Resource: &mcp.ResourceContents{
+				URI:      "file:///tmp/example.txt",
+				MIMEType: "text/plain",
+				Text:     "hello from the resource",
+			}},
+		}},
+	}).handle)
+
+	req := &mcp.ServerRequest[*mcp.CallToolParams]{
+		Params: &mcp.CallToolParams{Name: "echo"},
+		Extra:  &mcp.RequestExtra{Header: http.Header{}},
+	}
+	_, _ = wrapped(context.Background(), "tools/call", req)
+
+	p := mem.Snapshot()[0].Payload
+	if p == nil {
+		t.Fatal("expected payload")
+	}
+	blocks, _ := p.ResponseResult["content"].([]any)
+	if len(blocks) != 1 {
+		t.Fatalf("expected 1 block, got %d", len(blocks))
+	}
+	first, _ := blocks[0].(map[string]any)
+	if first["type"] != "resource" {
+		t.Errorf("type = %v, want \"resource\" (from MarshalJSON)", first["type"])
+	}
+	res, _ := first["resource"].(map[string]any)
+	if res == nil {
+		t.Fatalf("expected resource sub-object, got: %v", first)
+	}
+	if res["uri"] != "file:///tmp/example.txt" {
+		t.Errorf("resource.uri = %v", res["uri"])
+	}
+	if res["text"] != "hello from the resource" {
+		t.Errorf("resource.text = %v", res["text"])
+	}
+}
+
+func TestAudit_PayloadCapturesNotifications(t *testing.T) {
+	// End-to-end: Audit (receiving) seeds a recorder onto ctx; the
+	// fake handler simulates a tool firing notifications by calling
+	// the Notifications sending middleware against the same ctx.
+	// The captured slice must land in Payload.Notifications.
+	mem := audit.NewMemoryLogger()
+	chain := auth.NewChain(true, nil, nil)
+	mw := Audit(chain, mem, nil, nil, WithPayloadCapture(0), WithMaxNotifications(10))
+	sender := Notifications()
+
+	wrapped := mw(func(ctx context.Context, _ string, _ mcp.Request) (mcp.Result, error) {
+		// Simulate the tool firing two progress notifications via the
+		// sending pipeline. In the real server the tool calls
+		// req.Session.NotifyProgress which dispatches through the
+		// sending middleware chain; here we invoke the sending
+		// middleware directly with the same ctx.
+		passthrough := sender(func(context.Context, string, mcp.Request) (mcp.Result, error) {
+			return nil, nil
+		})
+		_, _ = passthrough(ctx, "notifications/progress",
+			&mcp.ServerRequest[*mcp.ProgressNotificationParams]{
+				Params: &mcp.ProgressNotificationParams{Progress: 1, Total: 3, Message: "step 1"},
+			})
+		_, _ = passthrough(ctx, "notifications/progress",
+			&mcp.ServerRequest[*mcp.ProgressNotificationParams]{
+				Params: &mcp.ProgressNotificationParams{Progress: 2, Total: 3, Message: "step 2"},
+			})
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "done"}}}, nil
+	})
+
+	req := &mcp.ServerRequest[*mcp.CallToolParams]{
+		Params: &mcp.CallToolParams{Name: "progress"},
+		Extra:  &mcp.RequestExtra{Header: http.Header{}},
+	}
+	_, _ = wrapped(context.Background(), "tools/call", req)
+
+	p := mem.Snapshot()[0].Payload
+	if p == nil {
+		t.Fatal("expected payload")
+	}
+	if len(p.Notifications) != 2 {
+		t.Fatalf("captured %d notifications, want 2", len(p.Notifications))
+	}
+	if p.Notifications[0].Method != "notifications/progress" {
+		t.Errorf("Method = %q", p.Notifications[0].Method)
+	}
+	if p.Notifications[0].Params["message"] != "step 1" {
+		t.Errorf("Params[message] = %v", p.Notifications[0].Params["message"])
+	}
+}
+
+func TestAudit_PayloadNotifications_ByteCapTrims(t *testing.T) {
+	// A LogMessage carries an arbitrary `data any` blob; a small count
+	// can still blow past max_payload_bytes. Verify the byte cap trims
+	// trailing notifications and sets NotificationsTruncated.
+	mem := audit.NewMemoryLogger()
+	chain := auth.NewChain(true, nil, nil)
+	// 600 byte cap forces a trim while leaving room for a couple of entries.
+	mw := Audit(chain, mem, nil, nil, WithPayloadCapture(600), WithMaxNotifications(20))
+	sender := Notifications()
+
+	bigData := strings.Repeat("X", 80) // each notification ~ >100 bytes JSON
+
+	wrapped := mw(func(ctx context.Context, _ string, _ mcp.Request) (mcp.Result, error) {
+		passthrough := sender(func(context.Context, string, mcp.Request) (mcp.Result, error) {
+			return nil, nil
+		})
+		for i := 0; i < 10; i++ {
+			_, _ = passthrough(ctx, "notifications/message",
+				&mcp.ServerRequest[*mcp.LoggingMessageParams]{
+					Params: &mcp.LoggingMessageParams{
+						Level: "info",
+						Data:  map[string]any{"i": i, "blob": bigData},
+					},
+				})
+		}
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "ok"}}}, nil
+	})
+
+	req := &mcp.ServerRequest[*mcp.CallToolParams]{
+		Params: &mcp.CallToolParams{Name: "noisy"},
+		Extra:  &mcp.RequestExtra{Header: http.Header{}},
+	}
+	_, _ = wrapped(context.Background(), "tools/call", req)
+
+	p := mem.Snapshot()[0].Payload
+	if p == nil {
+		t.Fatal("expected payload")
+	}
+	if !p.NotificationsTruncated {
+		t.Errorf("NotificationsTruncated = false, want true (cap 200 with 10 ~80b entries)")
+	}
+	if len(p.Notifications) >= 10 {
+		t.Errorf("notifications len = %d, want < 10 (some trimmed)", len(p.Notifications))
+	}
+	// First entry must always survive (binary-search keeps the longest fitting prefix).
+	if len(p.Notifications) == 0 {
+		t.Error("no notifications survived the trim; expected at least one")
+	}
+}
+
+func TestAudit_NotificationsRespectRedactKeys(t *testing.T) {
+	// Pipe-through: redactKeys passed to Audit must reach the recorder
+	// so notification params get the same sanitization as tool params.
+	mem := audit.NewMemoryLogger()
+	chain := auth.NewChain(true, nil, nil)
+	mw := Audit(chain, mem, []string{"token"}, nil, WithPayloadCapture(0))
+	sender := Notifications()
+
+	wrapped := mw(func(ctx context.Context, _ string, _ mcp.Request) (mcp.Result, error) {
+		passthrough := sender(func(context.Context, string, mcp.Request) (mcp.Result, error) {
+			return nil, nil
+		})
+		_, _ = passthrough(ctx, "notifications/message",
+			&mcp.ServerRequest[*mcp.LoggingMessageParams]{
+				Params: &mcp.LoggingMessageParams{
+					Level: "info",
+					Data:  map[string]any{"step": 1, "token": "leaked-secret"},
+				},
+			})
+		return &mcp.CallToolResult{}, nil
+	})
+
+	req := &mcp.ServerRequest[*mcp.CallToolParams]{
+		Params: &mcp.CallToolParams{Name: "noisy"},
+		Extra:  &mcp.RequestExtra{Header: http.Header{}},
+	}
+	_, _ = wrapped(context.Background(), "tools/call", req)
+
+	p := mem.Snapshot()[0].Payload
+	if p == nil || len(p.Notifications) != 1 {
+		t.Fatalf("expected 1 notification, got payload=%+v", p)
+	}
+	data, _ := p.Notifications[0].Params["data"].(map[string]any)
+	if data == nil {
+		t.Fatalf("data field missing/wrong type: %+v", p.Notifications[0].Params)
+	}
+	if data["token"] != "[redacted]" {
+		t.Errorf("token = %v, want [redacted]", data["token"])
+	}
+}
+
+func TestAudit_HandlerErrorCategoryMatchesPayload(t *testing.T) {
+	// The post-call categorization must set ev.ErrorCategory and the
+	// payload's response_error.category to the same value. Previously
+	// "handler" went into the payload but ev.ErrorCategory was left
+	// empty, so the indexed field disagreed with the detail row.
+	mem := audit.NewMemoryLogger()
+	chain := auth.NewChain(true, nil, nil)
+	mw := Audit(chain, mem, nil, nil, WithPayloadCapture(0))
+
+	wrapped := mw(func(context.Context, string, mcp.Request) (mcp.Result, error) {
+		return nil, errors.New("handler exploded")
+	})
+	req := &mcp.ServerRequest[*mcp.CallToolParams]{
+		Params: &mcp.CallToolParams{Name: "broken"},
+		Extra:  &mcp.RequestExtra{Header: http.Header{}},
+	}
+	_, _ = wrapped(context.Background(), "tools/call", req)
+
+	ev := mem.Snapshot()[0]
+	if ev.ErrorCategory != "handler" {
+		t.Errorf("ev.ErrorCategory = %q, want handler", ev.ErrorCategory)
+	}
+	if ev.Payload == nil || ev.Payload.ResponseError == nil {
+		t.Fatalf("expected payload with response_error, got %+v", ev.Payload)
+	}
+	if ev.Payload.ResponseError["category"] != "handler" {
+		t.Errorf("payload category = %v, want handler", ev.Payload.ResponseError["category"])
+	}
+}
+
+func TestAudit_AuthFailureCarriesCategory(t *testing.T) {
+	// M-3 in the review: response_error must carry a structured
+	// category in addition to the message.
+	mem := audit.NewMemoryLogger()
+	chain := auth.NewChain(false, nil, nil) // anonymous off + no stores → fails
+	mw := Audit(chain, mem, nil, nil, WithPayloadCapture(0))
+	wrapped := mw((&fakeMethodHandler{}).handle)
+
+	req := &mcp.ServerRequest[*mcp.CallToolParams]{
+		Params: &mcp.CallToolParams{Name: "echo"},
+		Extra:  &mcp.RequestExtra{Header: http.Header{"User-Agent": []string{"x"}}},
+	}
+	_, _ = wrapped(context.Background(), "tools/call", req)
+	p := mem.Snapshot()[0].Payload
+	if p == nil {
+		t.Fatal("expected payload")
+	}
+	if p.ResponseError == nil {
+		t.Fatal("expected response_error")
+	}
+	if cat, _ := p.ResponseError["category"].(string); cat != "auth" {
+		t.Errorf("response_error.category = %q, want auth", cat)
+	}
+}
+
+func TestAudit_PayloadCaptures_DispatchedMethod(t *testing.T) {
+	// M-1 in the review: jsonrpc_method must reflect what the receiving
+	// middleware actually saw, not a hard-coded "tools/call" string.
+	mem := audit.NewMemoryLogger()
+	chain := auth.NewChain(true, nil, nil)
+	mw := Audit(chain, mem, nil, nil, WithPayloadCapture(0))
+	wrapped := mw((&fakeMethodHandler{}).handle)
+	req := &mcp.ServerRequest[*mcp.CallToolParams]{
+		Params: &mcp.CallToolParams{Name: "echo"},
+		Extra:  &mcp.RequestExtra{Header: http.Header{}},
+	}
+	_, _ = wrapped(context.Background(), "tools/call", req)
+	p := mem.Snapshot()[0].Payload
+	if p.JSONRPCMethod != "tools/call" {
+		t.Errorf("JSONRPCMethod = %q, want tools/call", p.JSONRPCMethod)
+	}
+}
+
 func TestAudit_AuthFailure_StillCapturesPayload(t *testing.T) {
 	mem := audit.NewMemoryLogger()
 	chain := auth.NewChain(false, nil, nil) // no anonymous, no stores → auth fails

@@ -166,6 +166,10 @@ func buildFromDeps(cfg *config.Config, logger *slog.Logger, chain *auth.Chain, a
 	mcpServer.AddReceivingMiddleware(
 		mcpmw.Audit(chain, auditLog, cfg.Audit.RedactKeys, registry.Groups(), auditOptions(cfg.Audit)...),
 	)
+	// Sending side: capture every notifications/* dispatched during a
+	// tool-call window so they land in audit_payloads.notifications.
+	// No-op when payload capture is off (the recorder isn't seeded).
+	mcpServer.AddSendingMiddleware(mcpmw.Notifications())
 
 	readiness := httpsrv.NewReadiness()
 	mux := buildMux(cfg, mcpServer, readiness)

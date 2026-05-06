@@ -49,18 +49,22 @@ type Event struct {
 // by ID. Stored in the audit_payloads table. Each side carries a byte
 // size and a truncation flag so operators can tell whether they're
 // looking at the whole call or a capped prefix.
+//
+// Fields that the audit middleware can't populate today (the
+// transport-layer JSON-RPC ID, the inbound HTTP method and path) are
+// intentionally absent from this struct. They will land alongside a
+// transport-layer capture hook when replay-via-HTTP needs them.
 type Payload struct {
-	// JSON-RPC envelope as received.
+	// JSON-RPC method as the receiving middleware saw it (typically
+	// "tools/call"). Captured from the dispatch metadata, not the wire.
 	JSONRPCMethod    string         `json:"jsonrpc_method,omitempty"`
-	JSONRPCID        string         `json:"jsonrpc_id,omitempty"`
 	RequestParams    map[string]any `json:"request_params,omitempty"`
 	RequestSizeBytes int            `json:"request_size_bytes,omitempty"`
 	RequestTruncated bool           `json:"request_truncated,omitempty"`
 
-	// HTTP layer.
+	// HTTP layer (best-effort; only what the audit middleware can
+	// observe through ctx).
 	RequestHeaders    map[string][]string `json:"request_headers,omitempty"`
-	RequestMethod     string              `json:"request_method,omitempty"`
-	RequestPath       string              `json:"request_path,omitempty"`
 	RequestRemoteAddr string              `json:"request_remote_addr,omitempty"`
 
 	// JSON-RPC response.
@@ -69,8 +73,11 @@ type Payload struct {
 	ResponseSizeBytes int            `json:"response_size_bytes,omitempty"`
 	ResponseTruncated bool           `json:"response_truncated,omitempty"`
 
-	// Notifications fired during the call window.
-	Notifications []Notification `json:"notifications,omitempty"`
+	// Notifications fired during the call window. NotificationsTruncated
+	// is set when the captured slice exceeded MaxPayloadBytes and the
+	// tail was dropped to fit; the surviving prefix is what's stored.
+	Notifications          []Notification `json:"notifications,omitempty"`
+	NotificationsTruncated bool           `json:"notifications_truncated,omitempty"`
 
 	// Replay linkage; if this event was a /replay of another, this
 	// points at the original event's ID.
@@ -152,7 +159,10 @@ func (e *Event) WithResult(success bool, errMsg string, durMS int64) *Event {
 }
 
 // WithPayload attaches a full request/response payload to the event.
-// Pass nil to clear; nil-or-zero Payload values are not persisted.
+// A non-nil pointer is persisted as a row in audit_payloads; pass nil
+// to clear (or to leave the event summary-only). The persistence layer
+// does not look at the Payload's field contents to decide whether to
+// write a row; if you don't want a payload row, pass nil.
 func (e *Event) WithPayload(p *Payload) *Event {
 	e.Payload = p
 	return e
@@ -162,6 +172,11 @@ func (e *Event) WithPayload(p *Payload) *Event {
 // (case-insensitive substring match) appears in redactKeys replaced by
 // "[redacted]". Values inside arrays are recursed but array elements are not
 // keyed by name, so they are kept as-is.
+//
+// Fast path: when redactKeys is empty there's nothing to redact, so we
+// return the input map directly (same reference) instead of paying for a
+// deep copy. Callers that need a defensive copy should make one
+// themselves; this is a hot-path helper called once per audit row.
 func SanitizeParameters(v any, redactKeys []string) map[string]any {
 	if v == nil {
 		return nil
@@ -169,6 +184,9 @@ func SanitizeParameters(v any, redactKeys []string) map[string]any {
 	m, ok := v.(map[string]any)
 	if !ok {
 		return map[string]any{"_value": v}
+	}
+	if len(redactKeys) == 0 {
+		return m
 	}
 	out := make(map[string]any, len(m))
 	for k, val := range m {
