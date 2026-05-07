@@ -38,21 +38,27 @@
   <meta property="og:title" content="{{ config.site_name }}" />
   <meta property="og:description" content="{{ config.site_description }}" />
   {% endif %}
-  {# OG image: prefer the auto-generated social card from mkdocs-material's
-     social plugin (when imaging deps are installed in CI) at
-     /assets/images/social/<page>.png; otherwise fall back to the project
-     logo. Twitter/X uses summary (square) when the image is square so the
-     fallback still renders cleanly. #}
+  {# OG image: a hand-designed 1200x630 card at images/og-card.png used
+     site-wide so every share preview shows the same Plexara-branded
+     card regardless of which page the link points at (industry pattern
+     for OSS docs: Tailwind, Stripe, Vercel all do this). mkdocs-material's
+     auto-generated per-page social cards (via page.meta.image) take
+     priority when present, but we keep the plugin disabled by default in
+     favor of the curated card; flip enabled: !ENV [CI, true] in mkdocs.yml
+     to opt into per-page cards. #}
   {% if page and page.meta and page.meta.image %}
   <meta property="og:image" content="{{ page.meta.image }}" />
   <meta name="twitter:image" content="{{ page.meta.image }}" />
   <meta name="twitter:card" content="summary_large_image" />
   {% else %}
-  <meta property="og:image" content="{{ config.site_url }}images/logo.png" />
+  <meta property="og:image" content="{{ config.site_url }}images/og-card.png" />
   <meta property="og:image:type" content="image/png" />
-  <meta property="og:image:alt" content="mcp-test by Plexara" />
-  <meta name="twitter:image" content="{{ config.site_url }}images/logo.png" />
-  <meta name="twitter:card" content="summary" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="mcp-test: a controllable Model Context Protocol server for testing MCP gateways. Plexara open source." />
+  <meta name="twitter:image" content="{{ config.site_url }}images/og-card.png" />
+  <meta name="twitter:image:alt" content="mcp-test: a controllable Model Context Protocol server for testing MCP gateways." />
+  <meta name="twitter:card" content="summary_large_image" />
   {% endif %}
 
   {# Twitter / X cards. #}
