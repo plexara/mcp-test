@@ -148,3 +148,15 @@ markdown_extensions:
 plugins:
   - search:
       separator: '[\s\-,:!=\[\]()"`/]+|\.(?!\d)|&[lg]t;|(?!\b)(?=[A-Z][a-z])'
+  # Social plugin: generates 1200x630 PNG cards per page baked with the
+  # page title, eyebrow, and Plexara logo. Twitter/X picks `summary_large_image`
+  # when the OG image is large; without these cards every page falls back
+  # to the 378x338 logo.png and gets a small `summary` card. Gated on the
+  # CI env var so a local build without `mkdocs-material[imaging]` (and
+  # the cairo system deps) still works; the deploy workflow exports
+  # CI=true so production renders cards.
+  - social:
+      enabled: !ENV [CI, false]
+      cards_layout_options:
+        background_color: "#020617"
+        color: "#f8fafc"

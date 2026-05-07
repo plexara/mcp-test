@@ -32,10 +32,23 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install system deps for mkdocs-material social cards
+        # The social plugin renders per-page OG images (1200x630) via
+        # cairosvg + Pillow. cairosvg needs the system libcairo, libffi,
+        # and libjpeg libraries.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libcairo2-dev libfreetype6-dev libffi-dev libjpeg-dev libpng-dev libz-dev
+
       - name: Install dependencies
+        env:
+          # mkdocs-material[imaging] pulls in cairosvg + pillow so the
+          # `social` plugin can run.
+          PIP_DISABLE_PIP_VERSION_CHECK: "1"
         run: |
           pip install \
-            mkdocs-material \
+            'mkdocs-material[imaging]' \
             'pymdown-extensions>=10.0'
 
       - name: Build documentation
