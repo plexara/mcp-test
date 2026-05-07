@@ -1960,3 +1960,433 @@ html.plex-lightbox-open,
 html.plex-lightbox-open body {
   overflow: hidden;
 }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   API endpoint cards: the HTTP-API reference layout.
+
+   Aesthetic: each endpoint is a horizontal card. Method pill on the left,
+   full mono path on a single no-wrap line so 50-char paths read as one
+   token instead of getting hyphenated mid-segment by a narrow Path
+   column. Description sits below in DM Sans body type, indented to align
+   with the path. The 3px left strip color-codes the verb in copper /
+   coral so the eye can scan a long list and pick out the POST / DELETE
+   rows without parsing each pill.
+
+   Vocabulary borrowed from the carousel slides + lightbox shell so the
+   docs site reads as one designed system, not a stack of unrelated
+   components.
+   ───────────────────────────────────────────────────────────────────── */
+
+/* Wrap the whole stack so the children share margins and we have a hook
+   for narrow-viewport tweaks. md_in_html requires `markdown` attr to
+   pass through; we render this in the source markdown. */
+.md-typeset .api-endpoints {
+  margin: 1.25rem 0 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.md-typeset .api-endpoint {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.45rem;
+  margin: 0;
+  padding: 0.85rem 1rem 0.9rem;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-left: 3px solid color-mix(in srgb, var(--copper-500) 35%, transparent);
+  border-radius: var(--plex-radius-md);
+  background: var(--md-default-bg-color);
+  transition: border-color 200ms ease, box-shadow 200ms ease,
+              background-color 200ms ease;
+}
+.md-typeset .api-endpoint:hover {
+  border-color: var(--copper-500);
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.04),
+    0 14px 28px -18px rgba(20, 184, 171, 0.22);
+  background: color-mix(in srgb, var(--md-default-bg-color) 96%, var(--copper-500));
+}
+[data-md-color-scheme="slate"] .md-typeset .api-endpoint {
+  background: var(--midnight-900);
+  border-color: var(--midnight-800);
+  border-left-color: color-mix(in srgb, var(--copper-400) 45%, transparent);
+}
+[data-md-color-scheme="slate"] .md-typeset .api-endpoint:hover {
+  border-color: var(--copper-400);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.4),
+    0 14px 28px -18px rgba(45, 211, 203, 0.28);
+  background: color-mix(in srgb, var(--midnight-900) 92%, var(--copper-700));
+}
+
+/* Per-method left-strip accent. The color choice keeps GET in the brand
+   teal (read, frequent), POST one step deeper (write), DELETE in a
+   muted coral (destructive but not traffic-light red). Same accents
+   inform the method pill below. */
+.md-typeset .api-endpoint--get    { border-left-color: var(--copper-400); }
+.md-typeset .api-endpoint--post   { border-left-color: var(--copper-700); }
+.md-typeset .api-endpoint--delete { border-left-color: #b04829; }
+.md-typeset .api-endpoint--put    { border-left-color: var(--copper-600); }
+.md-typeset .api-endpoint--patch  { border-left-color: var(--copper-600); }
+
+[data-md-color-scheme="slate"] .md-typeset .api-endpoint--get    { border-left-color: var(--copper-300); }
+[data-md-color-scheme="slate"] .md-typeset .api-endpoint--post   { border-left-color: var(--copper-400); }
+[data-md-color-scheme="slate"] .md-typeset .api-endpoint--delete { border-left-color: #e8836a; }
+[data-md-color-scheme="slate"] .md-typeset .api-endpoint--put    { border-left-color: var(--copper-300); }
+[data-md-color-scheme="slate"] .md-typeset .api-endpoint--patch  { border-left-color: var(--copper-300); }
+
+/* The header row: method pill + path on one line. flex-nowrap so the
+   path takes the remaining width and overflows horizontally rather
+   than dropping below the pill. */
+.md-typeset .api-endpoint__head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+}
+
+.md-typeset .api-endpoint__method {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 3.6em;
+  padding: 0.18rem 0.6rem;
+  border-radius: 999px;
+  font-family: "DM Sans", system-ui, sans-serif;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-feature-settings: "tnum" 1;
+  border: 1px solid transparent;
+  /* Override Material's default badge / code styling that .md-typeset
+     might apply via cascade. */
+  background: transparent;
+  color: var(--md-default-fg-color);
+}
+
+.md-typeset .api-endpoint__method--get {
+  background: color-mix(in srgb, var(--copper-500) 12%, transparent);
+  color: var(--copper-800);
+  border-color: color-mix(in srgb, var(--copper-500) 35%, transparent);
+}
+.md-typeset .api-endpoint__method--post {
+  background: color-mix(in srgb, var(--copper-700) 16%, transparent);
+  color: var(--copper-900);
+  border-color: color-mix(in srgb, var(--copper-700) 45%, transparent);
+}
+.md-typeset .api-endpoint__method--delete {
+  background: rgba(176, 72, 41, 0.12);
+  color: #8b3a23;
+  border-color: rgba(176, 72, 41, 0.40);
+}
+[data-md-color-scheme="slate"] .md-typeset .api-endpoint__method--get {
+  background: color-mix(in srgb, var(--copper-400) 18%, transparent);
+  color: var(--copper-200);
+  border-color: color-mix(in srgb, var(--copper-400) 50%, transparent);
+}
+[data-md-color-scheme="slate"] .md-typeset .api-endpoint__method--post {
+  background: color-mix(in srgb, var(--copper-500) 22%, transparent);
+  color: var(--copper-100);
+  border-color: color-mix(in srgb, var(--copper-500) 55%, transparent);
+}
+[data-md-color-scheme="slate"] .md-typeset .api-endpoint__method--delete {
+  background: rgba(232, 131, 106, 0.18);
+  color: #f0a896;
+  border-color: rgba(232, 131, 106, 0.45);
+}
+
+/* The path. Critical no-wrap behavior: white-space:nowrap +
+   overflow-x:auto so a 60-char path is readable as a single token,
+   horizontally scrollable on narrow viewports rather than broken. */
+.md-typeset .api-endpoint__path {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--md-code-font, ui-monospace, "SF Mono", "Menlo", monospace);
+  font-size: 0.9rem;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  color: var(--md-default-fg-color);
+  background: transparent;
+  padding: 0;
+  border: 0;
+  white-space: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: var(--copper-500) transparent;
+}
+.md-typeset .api-endpoint__path::-webkit-scrollbar { height: 4px; }
+.md-typeset .api-endpoint__path::-webkit-scrollbar-track { background: transparent; }
+.md-typeset .api-endpoint__path::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--copper-500) 60%, transparent);
+  border-radius: 2px;
+}
+[data-md-color-scheme="slate"] .md-typeset .api-endpoint__path { color: #fff; }
+
+/* Body: description text in the same body type as the rest of the site,
+   indented to align under the path's left edge so the eye doesn't have
+   to reset. Keeps inline code, emphasis, and links rendering naturally
+   via md_in_html. */
+.md-typeset .api-endpoint__body {
+  font-family: "DM Sans", system-ui, sans-serif;
+  font-size: 0.875rem;
+  line-height: 1.6;
+  color: var(--md-default-fg-color--light);
+  /* Indent under the method pill so the description aligns with where
+     the path text starts (3.6em min-width pill + 0.6rem gap ≈ 4.5rem). */
+  padding-left: calc(3.6em + 0.6rem);
+  margin: 0;
+}
+.md-typeset .api-endpoint__body > :first-child { margin-top: 0; }
+.md-typeset .api-endpoint__body > :last-child  { margin-bottom: 0; }
+.md-typeset .api-endpoint__body p {
+  margin: 0 0 0.4rem;
+}
+.md-typeset .api-endpoint__body p:last-child { margin-bottom: 0; }
+.md-typeset .api-endpoint__body code {
+  /* Material's default inline-code chrome stays; just ensure it doesn't
+     collide visually with the path mono. */
+  font-size: 0.82rem;
+}
+[data-md-color-scheme="slate"] .md-typeset .api-endpoint__body { color: var(--midnight-200); }
+
+/* Inline meta block for endpoints with extra structured info (Body +
+   Returns columns from the old Admin table). Renders as a small
+   key/value pair line under the description. */
+.md-typeset .api-endpoint__meta {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.25rem 0.85rem;
+  margin-top: 0.45rem;
+  font-family: "DM Sans", system-ui, sans-serif;
+  font-size: 0.82rem;
+  line-height: 1.55;
+}
+.md-typeset .api-endpoint__meta dt {
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--copper-700);
+  padding-top: 0.18rem;
+  margin: 0;
+}
+[data-md-color-scheme="slate"] .md-typeset .api-endpoint__meta dt { color: var(--copper-300); }
+.md-typeset .api-endpoint__meta dd {
+  margin: 0;
+  color: var(--md-default-fg-color--light);
+  min-width: 0;
+}
+[data-md-color-scheme="slate"] .md-typeset .api-endpoint__meta dd { color: var(--midnight-200); }
+
+/* Narrow-viewport: drop the body indent so the description gets the
+   full row width. The horizontal-scroll path stays the same. */
+@media (max-width: 720px) {
+  .md-typeset .api-endpoint__body { padding-left: 0; }
+  .md-typeset .api-endpoint__head { gap: 0.5rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .md-typeset .api-endpoint { transition: none; }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Config-key cards: same vocabulary as the API endpoint cards, used
+   for the YAML reference and the env-var listings. The key (e.g.
+   `server.streamable.session_timeout`, `MCPTEST_OIDC_CLIENT_SECRET`)
+   gets the top line on its own so a 40-char dotted path doesn't
+   hyphenate mid-segment into a narrow Key column. Type / default chips
+   on the right of the head; notes prose below.
+   ───────────────────────────────────────────────────────────────────── */
+
+.md-typeset .config-keys,
+.md-typeset .def-cards {
+  margin: 1.25rem 0 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.md-typeset .config-key,
+.md-typeset .def-card {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.45rem;
+  margin: 0;
+  padding: 0.85rem 1rem 0.9rem;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-left: 3px solid color-mix(in srgb, var(--copper-500) 35%, transparent);
+  border-radius: var(--plex-radius-md);
+  background: var(--md-default-bg-color);
+  transition: border-color 200ms ease, box-shadow 200ms ease,
+              background-color 200ms ease;
+}
+.md-typeset .config-key:hover,
+.md-typeset .def-card:hover {
+  border-color: var(--copper-500);
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.04),
+    0 14px 28px -18px rgba(20, 184, 171, 0.22);
+  background: color-mix(in srgb, var(--md-default-bg-color) 96%, var(--copper-500));
+}
+[data-md-color-scheme="slate"] .md-typeset .config-key,
+[data-md-color-scheme="slate"] .md-typeset .def-card {
+  background: var(--midnight-900);
+  border-color: var(--midnight-800);
+  border-left-color: color-mix(in srgb, var(--copper-400) 45%, transparent);
+}
+[data-md-color-scheme="slate"] .md-typeset .config-key:hover,
+[data-md-color-scheme="slate"] .md-typeset .def-card:hover {
+  border-color: var(--copper-400);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.4),
+    0 14px 28px -18px rgba(45, 211, 203, 0.28);
+  background: color-mix(in srgb, var(--midnight-900) 92%, var(--copper-700));
+}
+
+/* Required vs optional left strips. Most keys are optional; mark a
+   handful as required (e.g. `oidc.issuer` when oidc.enabled). */
+.md-typeset .config-key--required { border-left-color: var(--copper-700); }
+[data-md-color-scheme="slate"] .md-typeset .config-key--required { border-left-color: var(--copper-300); }
+
+/* The head is a fixed two-row stack: key on row 1, chips on row 2.
+   Forcing a column (rather than flex-wrap) means the chips sit in the
+   same place on every card regardless of the key's length, which is
+   what the eye expects when scanning a long list. */
+.md-typeset .config-key__head,
+.md-typeset .def-card__head {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+/* Key name: bold mono, copper accent. Allowed to wrap at any character
+   when a single segment exceeds the row, but in practice every key
+   here fits on one line at the standard mkdocs content width. */
+.md-typeset code.config-key__name,
+.md-typeset code.def-card__name {
+  display: block;
+  width: 100%;
+  font-family: var(--md-code-font, ui-monospace, "SF Mono", "Menlo", monospace);
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  color: var(--copper-800);
+  background: transparent;
+  padding: 0;
+  border: 0;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+[data-md-color-scheme="slate"] .md-typeset code.config-key__name,
+[data-md-color-scheme="slate"] .md-typeset code.def-card__name { color: var(--copper-200); }
+
+/* Chip row: always on its own line below the key so type/default
+   anchor in the same horizontal slot on every card. */
+.md-typeset .config-key__chips,
+.md-typeset .def-card__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.md-typeset .config-key__chip,
+.md-typeset .def-card__chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  padding: 0.18rem 0.55rem 0.2rem;
+  border-radius: 999px;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  background: color-mix(in srgb, var(--md-default-bg-color) 92%, var(--copper-500));
+  font-family: "DM Sans", system-ui, sans-serif;
+  font-size: 0.72rem;
+  line-height: 1.2;
+  color: var(--md-default-fg-color);
+}
+[data-md-color-scheme="slate"] .md-typeset .config-key__chip,
+[data-md-color-scheme="slate"] .md-typeset .def-card__chip {
+  background: color-mix(in srgb, var(--midnight-900) 88%, var(--copper-700));
+  border-color: var(--midnight-800);
+  color: #fff;
+}
+
+.md-typeset .config-key__chip-label,
+.md-typeset .def-card__chip-label {
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--copper-700);
+}
+[data-md-color-scheme="slate"] .md-typeset .config-key__chip-label,
+[data-md-color-scheme="slate"] .md-typeset .def-card__chip-label { color: var(--copper-300); }
+
+.md-typeset .config-key__chip-value,
+.md-typeset .config-key__chip code,
+.md-typeset .def-card__chip-value,
+.md-typeset .def-card__chip code {
+  font-family: var(--md-code-font, ui-monospace, "SF Mono", "Menlo", monospace);
+  font-size: 0.78rem;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  color: var(--md-default-fg-color);
+  background: transparent;
+  padding: 0;
+  border: 0;
+}
+[data-md-color-scheme="slate"] .md-typeset .config-key__chip-value,
+[data-md-color-scheme="slate"] .md-typeset .config-key__chip code,
+[data-md-color-scheme="slate"] .md-typeset .def-card__chip-value,
+[data-md-color-scheme="slate"] .md-typeset .def-card__chip code { color: #fff; }
+
+/* `default` chip carries an emphasized copper border so the eye finds
+   the default value in a long list. */
+.md-typeset .config-key__chip--default {
+  border-color: color-mix(in srgb, var(--copper-500) 50%, transparent);
+  background: color-mix(in srgb, var(--md-default-bg-color) 88%, var(--copper-500));
+}
+[data-md-color-scheme="slate"] .md-typeset .config-key__chip--default {
+  border-color: color-mix(in srgb, var(--copper-400) 55%, transparent);
+  background: color-mix(in srgb, var(--midnight-900) 78%, var(--copper-700));
+}
+
+/* `required` chip: distinct rust tone so missing-required errors map
+   visually to the keys that produce them. */
+.md-typeset .config-key__chip--required {
+  border-color: rgba(176, 72, 41, 0.50);
+  background: rgba(176, 72, 41, 0.10);
+}
+.md-typeset .config-key__chip--required .config-key__chip-label { color: #8b3a23; }
+[data-md-color-scheme="slate"] .md-typeset .config-key__chip--required {
+  border-color: rgba(232, 131, 106, 0.55);
+  background: rgba(232, 131, 106, 0.16);
+}
+[data-md-color-scheme="slate"] .md-typeset .config-key__chip--required .config-key__chip-label { color: #f0a896; }
+
+.md-typeset .config-key__body,
+.md-typeset .def-card__body {
+  font-family: "DM Sans", system-ui, sans-serif;
+  font-size: 0.875rem;
+  line-height: 1.6;
+  color: var(--md-default-fg-color--light);
+  margin: 0;
+}
+.md-typeset .config-key__body > :first-child { margin-top: 0; }
+.md-typeset .config-key__body > :last-child { margin-bottom: 0; }
+.md-typeset .config-key__body p { margin: 0 0 0.4rem; }
+.md-typeset .config-key__body p:last-child { margin-bottom: 0; }
+.md-typeset .config-key__body code { font-size: 0.82rem; }
+[data-md-color-scheme="slate"] .md-typeset .config-key__body,
+[data-md-color-scheme="slate"] .md-typeset .def-card__body { color: var(--midnight-200); }
+
+@media (prefers-reduced-motion: reduce) {
+  .md-typeset .config-key,
+  .md-typeset .def-card { transition: none; }
+}

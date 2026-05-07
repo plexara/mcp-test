@@ -80,6 +80,7 @@ nav:
       - Inspection workflow: operations/inspection.md
       - Portal: operations/portal.md
       - Deployment: operations/deployment.md
+      - Kubernetes example: operations/kubernetes.md
       - Testing a Gateway: operations/gateway-testing.md
   - Reference:
       - HTTP API: reference/http-api.md

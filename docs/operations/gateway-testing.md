@@ -11,16 +11,14 @@ This page collects the patterns.
 
 ## The setup
 
-```
-┌────────┐      ┌─────────┐      ┌──────────┐
-│ client │ ──▶  │ gateway │ ──▶  │ mcp-test │
-└────────┘      └─────────┘      └──────────┘
-                                       │
-                                       ▼
-                                  ┌─────────┐
-                                  │ audit   │
-                                  │ (Postgres) │
-                                  └─────────┘
+```mermaid
+flowchart LR
+    client[client]
+    gateway[gateway]
+    mcptest[mcp-test]
+    audit[(audit<br/>Postgres)]
+
+    client --> gateway --> mcptest --> audit
 ```
 
 The client makes calls. The gateway transforms them (auth,
@@ -34,10 +32,16 @@ differ is what the gateway did.
 **Question:** does the gateway forward the original caller's identity,
 or does it re-authenticate and substitute its own?
 
-```
-client → gateway: Authorization: Bearer <user-jwt>
-                  │
-                  └─→ mcp-test: Authorization: Bearer <whichever>
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Client as client
+    participant Gateway as gateway
+    participant Server as mcp-test
+
+    Client->>Gateway: Authorization: Bearer <user-jwt>
+    Note right of Gateway: forward verbatim,<br/>or re-auth and substitute?
+    Gateway->>Server: Authorization: Bearer <whichever>
 ```
 
 Call `whoami`. The returned `subject` and `email` should match the

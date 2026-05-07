@@ -1,0 +1,25 @@
+# Headless ClusterIP for the Postgres StatefulSet. mcp-test reaches the
+# DB via DNS name `postgres.mcp-test.svc.cluster.local:5432`. Headless
+# (clusterIP: None) gives the StatefulSet a stable per-pod DNS record
+# (`postgres-0.postgres...`); the connection string in 20-mcp-test-secret
+# uses the unqualified `postgres` host because both pods share a
+# namespace and DNS resolves it.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: mcp-test
+  labels:
+    app: postgres
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/component: db
+    app.kubernetes.io/part-of: mcp-test
+spec:
+  clusterIP: None
+  selector:
+    app: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+      protocol: TCP

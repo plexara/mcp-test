@@ -1,0 +1,53 @@
+# Ingress for mcp-test. Assumes:
+#   - ingress-nginx as the controller (annotations are nginx-specific).
+#     Adjust for traefik / aws-load-balancer-controller / etc.
+#   - cert-manager with a `letsencrypt-production` ClusterIssuer for
+#     automated TLS. Remove the `cert-manager.io/cluster-issuer`
+#     annotation and the `tls:` block if you handle TLS at a different
+#     layer (terminating LB, service mesh, etc.).
+#
+# REPLACE: `mcp-test-server.example.com` (3 occurrences below) with the
+# DNS name your Ingress controller routes to this service.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mcp-test
+  namespace: mcp-test
+  labels:
+    app: mcp-test
+    app.kubernetes.io/name: mcp-test
+    app.kubernetes.io/component: server
+    app.kubernetes.io/part-of: mcp-test
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-production
+    # CORS: lets a browser-side MCP gateway call this server. Tighten
+    # the allow-origin list to the gateway hosts you actually use.
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, DELETE, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "*"
+    nginx.ingress.kubernetes.io/cors-allow-credentials: "true"
+    # Streamable HTTP / SSE: long-lived connections for live tail and
+    # MCP server-initiated messages. Disable buffering so the client
+    # sees frames as they're written.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-buffer-size: "8k"
+    nginx.ingress.kubernetes.io/service-upstream: "true"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: mcp-test-server.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: mcp-test
+                port:
+                  number: 8080
+  tls:
+    - hosts:
+        - mcp-test-server.example.com
+      secretName: mcp-test-tls

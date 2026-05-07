@@ -16,19 +16,150 @@ plus a few un-prefixed standard names (`LOG_LEVEL`).
 
 ## Common overrides
 
-| Variable | Used by | Example |
-| --- | --- | --- |
-| `LOG_LEVEL` | Binary | `debug`, `info` (default), `warn`, `error`. |
-| `MCPTEST_PORT` | `server.address` | `8080` |
-| `MCPTEST_BASE_URL` | `server.base_url` | `https://mcp-test.example.com` |
-| `MCPTEST_DATABASE_URL` | `database.url` | `postgres://mcp:mcp@localhost:5432/mcp_test?sslmode=disable` |
-| `MCPTEST_DEV_KEY` | `api_keys.file[0].key` | `devkey-please-change` |
-| `MCPTEST_OIDC_ISSUER` | `oidc.issuer` | `http://localhost:8081/realms/mcp-test` |
-| `MCPTEST_OIDC_AUDIENCE` | `oidc.audience` | `mcp-test` |
-| `MCPTEST_OIDC_CLIENT_ID` | `oidc.client_id` | `mcp-test-portal` |
-| `MCPTEST_OIDC_CLIENT_SECRET` | `oidc.client_secret` | (confidential clients only) |
-| `MCPTEST_COOKIE_SECRET` | `portal.cookie_secret` | 32+ bytes, base64 |
-| `MCPTEST_INSECURE` | OIDC skip-signature gate | `1` to allow `oidc.skip_signature_verification` |
+<div class="config-keys" markdown>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">LOG_LEVEL</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">used by</span><span class="config-key__chip-value">binary</span></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+`debug`, `info` (default), `warn`, `error`. Sets the slog log level for the whole process.
+</div>
+</div>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">MCPTEST_PORT</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">maps to</span><code class="config-key__chip-value">server.address</code></span>
+<span class="config-key__chip"><span class="config-key__chip-label">example</span><code class="config-key__chip-value">8080</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+The live config interpolates as `:${MCPTEST_PORT:-8080}`.
+</div>
+</div>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">MCPTEST_BASE_URL</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">maps to</span><code class="config-key__chip-value">server.base_url</code></span>
+<span class="config-key__chip"><span class="config-key__chip-label">example</span><code class="config-key__chip-value">https://mcp-test.example.com</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+The public origin clients reach the server at. Used in OIDC redirect URIs and the protected-resource metadata document.
+</div>
+</div>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">MCPTEST_DATABASE_URL</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">maps to</span><code class="config-key__chip-value">database.url</code></span>
+<span class="config-key__chip"><span class="config-key__chip-label">example</span><code class="config-key__chip-value">postgres://mcp:mcp@localhost:5432/mcp_test?sslmode=disable</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+A pgx-compatible Postgres DSN.
+</div>
+</div>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">MCPTEST_DEV_KEY</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">maps to</span><code class="config-key__chip-value">api_keys.file[0].key</code></span>
+<span class="config-key__chip"><span class="config-key__chip-label">example</span><code class="config-key__chip-value">devkey-please-change</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+The bootstrap file API key. Sent as `X-API-Key`.
+</div>
+</div>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">MCPTEST_OIDC_ISSUER</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">maps to</span><code class="config-key__chip-value">oidc.issuer</code></span>
+<span class="config-key__chip"><span class="config-key__chip-label">example</span><code class="config-key__chip-value">http://localhost:8081/realms/mcp-test</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+Required when OIDC is enabled.
+</div>
+</div>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">MCPTEST_OIDC_AUDIENCE</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">maps to</span><code class="config-key__chip-value">oidc.audience</code></span>
+<span class="config-key__chip"><span class="config-key__chip-label">example</span><code class="config-key__chip-value">mcp-test</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+Required `aud` claim value.
+</div>
+</div>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">MCPTEST_OIDC_CLIENT_ID</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">maps to</span><code class="config-key__chip-value">oidc.client_id</code></span>
+<span class="config-key__chip"><span class="config-key__chip-label">example</span><code class="config-key__chip-value">mcp-test-portal</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+The OIDC client ID used by the browser PKCE login flow.
+</div>
+</div>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">MCPTEST_OIDC_CLIENT_SECRET</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">maps to</span><code class="config-key__chip-value">oidc.client_secret</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+Confidential clients only; public PKCE clients leave it empty.
+</div>
+</div>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">MCPTEST_COOKIE_SECRET</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">maps to</span><code class="config-key__chip-value">portal.cookie_secret</code></span>
+<span class="config-key__chip"><span class="config-key__chip-label">example</span><span class="config-key__chip-value">32+ bytes, base64</span></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+HMAC key for the portal session cookie. Generate with `openssl rand -base64 32`.
+</div>
+</div>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">MCPTEST_INSECURE</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">used by</span><span class="config-key__chip-value">OIDC skip-signature gate</span></span>
+<span class="config-key__chip"><span class="config-key__chip-label">example</span><code class="config-key__chip-value">1</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+Set to `1` to allow `oidc.skip_signature_verification` (refused otherwise).
+</div>
+</div>
+
+</div>
 
 ## Interpolation rules
 

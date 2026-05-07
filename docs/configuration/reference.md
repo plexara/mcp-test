@@ -36,21 +36,178 @@ server:
     json_response: false
 ```
 
-| Key | Type | Default | Notes |
-| --- | --- | --- | --- |
-| `server.name` | string | `mcp-test` | Reported in the MCP `initialize` response and in the audit log. |
-| `server.address` | string | `:8080` | Listen address; `MCPTEST_PORT` env interpolation common. |
-| `server.base_url` | string | `http://localhost:<port>` | Public origin used for the protected-resource metadata document and OIDC redirect URIs. Set this to your real hostname behind TLS terminators. |
-| `server.instructions` | string | (project default, see [Server Instructions](instructions.md)) | Returned to MCP clients via `initialize.result.instructions`. Most clients pass this to the LLM as system context. |
-| `server.read_header_timeout` | duration | `10s` | Standard `http.Server.ReadHeaderTimeout`. |
-| `server.shutdown.grace_period` | duration | `25s` | Maximum time `http.Server.Shutdown` waits for in-flight requests during drain. |
-| `server.shutdown.pre_shutdown_delay` | duration | `2s` | After SIGINT/SIGTERM, the server flips `/readyz` to 503 and sleeps this long before starting the shutdown so load balancers notice. |
-| `server.tls.enabled` | bool | `false` | If true, listens with TLS using the cert/key files below. Most deployments terminate TLS upstream and leave this false. |
-| `server.tls.cert_file` | string | `""` | PEM-encoded certificate path. |
-| `server.tls.key_file` | string | `""` | PEM-encoded private key path. |
-| `server.streamable.session_timeout` | duration | `30m` | Idle MCP session timeout passed to `mcp.StreamableHTTPOptions`. |
-| `server.streamable.stateless` | bool | `false` | If true, the SDK does not validate `Mcp-Session-Id` and uses ephemeral sessions. Useful behind external session stores; we don't ship one. |
-| `server.streamable.json_response` | bool | `false` | If true, responses are `application/json` instead of `text/event-stream`. |
+<div class="config-keys" markdown>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">server.name</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">string</span></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">mcp-test</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+Reported in the MCP `initialize` response and in the audit log.
+</div>
+</div>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">server.address</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">string</span></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">:8080</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+Listen address; `MCPTEST_PORT` env interpolation common.
+</div>
+</div>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">server.base_url</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">string</span></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">http://localhost:&lt;port&gt;</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+Public origin used for the protected-resource metadata document and OIDC redirect URIs. Set this to your real hostname behind TLS terminators.
+</div>
+</div>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">server.instructions</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">string</span></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><span class="config-key__chip-value">project default</span></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+Returned to MCP clients via `initialize.result.instructions`. Most clients pass this to the LLM as system context. See [Server Instructions](instructions.md) for the shipped default.
+</div>
+</div>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">server.read_header_timeout</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">duration</span></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">10s</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+Standard `http.Server.ReadHeaderTimeout`.
+</div>
+</div>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">server.shutdown.grace_period</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">duration</span></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">25s</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+Maximum time `http.Server.Shutdown` waits for in-flight requests during drain.
+</div>
+</div>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">server.shutdown.pre_shutdown_delay</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">duration</span></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">2s</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+After SIGINT / SIGTERM, the server flips `/readyz` to 503 and sleeps this long before starting the shutdown so load balancers notice.
+</div>
+</div>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">server.tls.enabled</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">bool</span></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">false</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+If true, listens with TLS using the cert / key files below. Most deployments terminate TLS upstream and leave this false.
+</div>
+</div>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">server.tls.cert_file</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">string</span></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">""</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+PEM-encoded certificate path.
+</div>
+</div>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">server.tls.key_file</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">string</span></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">""</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+PEM-encoded private key path.
+</div>
+</div>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">server.streamable.session_timeout</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">duration</span></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">30m</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+Idle MCP session timeout passed to `mcp.StreamableHTTPOptions`.
+</div>
+</div>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">server.streamable.stateless</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">bool</span></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">false</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+If true, the SDK does not validate `Mcp-Session-Id` and uses ephemeral sessions. Useful behind external session stores; we don't ship one.
+</div>
+</div>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">server.streamable.json_response</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">bool</span></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">false</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+If true, responses are `application/json` instead of `text/event-stream`.
+</div>
+</div>
+
+</div>
 
 ## oidc
 
@@ -70,17 +227,126 @@ oidc:
   skip_signature_verification: false
 ```
 
-| Key | Type | Default | Notes |
-| --- | --- | --- | --- |
-| `oidc.enabled` | bool | `false` | Master toggle. With it off, only API keys (file/DB) and anonymous mode (if enabled) authenticate. |
-| `oidc.issuer` | string | `""` | Required when enabled. The IdP's issuer URL; mcp-test fetches `<issuer>/.well-known/openid-configuration` to find the JWKS and authorization endpoints. |
-| `oidc.audience` | string | `""` | Required `aud` claim value. Tokens that don't carry this audience are rejected. |
-| `oidc.client_id` | string | `""` | The OIDC client ID used by the browser PKCE login flow. |
-| `oidc.client_secret` | string | `""` | Optional. Confidential clients should set this; public PKCE clients leave it empty. |
-| `oidc.allowed_clients` | []string | `[]` | Optional `azp` / `client_id` allowlist. Empty means any client of the issuer is accepted. |
-| `oidc.clock_skew_seconds` | int | `30` | Leeway applied when validating `exp` / `iat` / `nbf`. |
-| `oidc.jwks_cache_ttl` | duration | `1h` | How long fetched JWKS keys are cached. The cache transparently refreshes on any unknown `kid`. |
-| `oidc.skip_signature_verification` | bool | `false` | Trust the IdP's TLS without verifying JWT signatures. Refused unless `MCPTEST_INSECURE=1` is set in the environment. |
+<div class="config-keys" markdown>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">oidc.enabled</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">bool</span></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">false</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+Master toggle. With it off, only API keys (file / DB) and anonymous mode (if enabled) authenticate.
+</div>
+</div>
+
+<div class="config-key config-key--required" markdown>
+<div class="config-key__head">
+<code class="config-key__name">oidc.issuer</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">string</span></span>
+<span class="config-key__chip config-key__chip--required"><span class="config-key__chip-label">required when</span><span class="config-key__chip-value">oidc.enabled</span></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+The IdP's issuer URL. mcp-test fetches `<issuer>/.well-known/openid-configuration` to find the JWKS and authorization endpoints.
+</div>
+</div>
+
+<div class="config-key config-key--required" markdown>
+<div class="config-key__head">
+<code class="config-key__name">oidc.audience</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">string</span></span>
+<span class="config-key__chip config-key__chip--required"><span class="config-key__chip-label">required when</span><span class="config-key__chip-value">oidc.enabled</span></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+Required `aud` claim value. Tokens that don't carry this audience are rejected.
+</div>
+</div>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">oidc.client_id</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">string</span></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">""</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+The OIDC client ID used by the browser PKCE login flow.
+</div>
+</div>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">oidc.client_secret</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">string</span></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">""</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+Optional. Confidential clients should set this; public PKCE clients leave it empty.
+</div>
+</div>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">oidc.allowed_clients</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">[]string</span></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">[]</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+Optional `azp` / `client_id` allowlist. Empty means any client of the issuer is accepted.
+</div>
+</div>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">oidc.clock_skew_seconds</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">int</span></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">30</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+Leeway applied when validating `exp` / `iat` / `nbf`.
+</div>
+</div>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">oidc.jwks_cache_ttl</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">duration</span></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">1h</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+How long fetched JWKS keys are cached. The cache transparently refreshes on any unknown `kid`.
+</div>
+</div>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">oidc.skip_signature_verification</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">bool</span></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">false</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+Trust the IdP's TLS without verifying JWT signatures. Refused unless `MCPTEST_INSECURE=1` is set in the environment.
+</div>
+</div>
+
+</div>
 
 See [Authentication](auth.md) for the full identity model and
 auth-chain semantics.
@@ -99,10 +365,35 @@ api_keys:
     enabled: true
 ```
 
-| Key | Type | Default | Notes |
-| --- | --- | --- | --- |
-| `api_keys.file` | []entry | `[]` | List of `{name, key, description}` entries. The plaintext `key` is constant-time compared against the inbound `X-API-Key` header. Empty `key` values are skipped (so an unset env var doesn't enable an empty credential). |
-| `api_keys.db.enabled` | bool | `false` | If true, the binary opens the bcrypt-hashed `api_keys` Postgres table for read+write. The portal's API Keys page manages entries. |
+<div class="config-keys" markdown>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">api_keys.file</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">[]entry</span></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">[]</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+List of `{name, key, description}` entries. The plaintext `key` is constant-time compared against the inbound `X-API-Key` header. Empty `key` values are skipped (so an unset env var doesn't enable an empty credential).
+</div>
+</div>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">api_keys.db.enabled</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">bool</span></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">false</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+If true, the binary opens the bcrypt-hashed `api_keys` Postgres table for read+write. The portal's API Keys page manages entries.
+</div>
+</div>
+
+</div>
 
 Both sources contribute to the same auth chain: an inbound API key is
 matched against file entries first (cheap O(N) constant-time compare),
@@ -119,11 +410,48 @@ auth:
   require_for_portal: true
 ```
 
-| Key | Type | Default | Notes |
-| --- | --- | --- | --- |
-| `auth.allow_anonymous` | bool | `false` | If true, missing credentials on `/mcp` resolve to a synthetic Anonymous identity. Useful for some gateway tests where you want to validate header pass-through without auth in the way. The portal still requires a credential. |
-| `auth.require_for_mcp` | bool | `true` | Gate the `/` endpoint. Currently the auth gateway checks for credential *presence* and 401s without one (unless anonymous is allowed). |
-| `auth.require_for_portal` | bool | `true` | Gate every `/portal/*` and `/api/v1/*` route. The portal auth middleware is independent of `allow_anonymous`. |
+<div class="config-keys" markdown>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">auth.allow_anonymous</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">bool</span></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">false</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+If true, missing credentials on `/mcp` resolve to a synthetic Anonymous identity. Useful for some gateway tests where you want to validate header pass-through without auth in the way. The portal still requires a credential.
+</div>
+</div>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">auth.require_for_mcp</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">bool</span></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">true</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+Gate the `/` endpoint. Currently the auth gateway checks for credential *presence* and 401s without one (unless anonymous is allowed).
+</div>
+</div>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">auth.require_for_portal</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">bool</span></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">true</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+Gate every `/portal/*` and `/api/v1/*` route. The portal auth middleware is independent of `allow_anonymous`.
+</div>
+</div>
+
+</div>
 
 ## database
 
@@ -138,12 +466,61 @@ database:
   conn_max_lifetime: 1h
 ```
 
-| Key | Type | Default | Notes |
-| --- | --- | --- | --- |
-| `database.url` | string | (required) | A PostgreSQL DSN that the pgx driver understands. The migration runner rewrites `postgres://` to `pgx5://` internally so the golang-migrate driver picks it up. |
-| `database.max_open_conns` | int | `25` | Max active connections in the pgxpool. |
-| `database.max_idle_conns` | int | `5` | Min idle connections held open. |
-| `database.conn_max_lifetime` | duration | `1h` | Recycle connections older than this. |
+<div class="config-keys" markdown>
+
+<div class="config-key config-key--required" markdown>
+<div class="config-key__head">
+<code class="config-key__name">database.url</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">string</span></span>
+<span class="config-key__chip config-key__chip--required"><span class="config-key__chip-label">required</span><span class="config-key__chip-value">always</span></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+A PostgreSQL DSN that the pgx driver understands. The migration runner rewrites `postgres://` to `pgx5://` internally so the golang-migrate driver picks it up.
+</div>
+</div>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">database.max_open_conns</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">int</span></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">25</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+Max active connections in the pgxpool.
+</div>
+</div>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">database.max_idle_conns</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">int</span></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">5</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+Min idle connections held open.
+</div>
+</div>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">database.conn_max_lifetime</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">duration</span></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">1h</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+Recycle connections older than this.
+</div>
+</div>
+
+</div>
 
 See [Database & Migrations](database.md) for the schema details.
 
@@ -158,11 +535,48 @@ audit:
   redact_keys: [password, token, secret, authorization, cookie, api_key, credentials]
 ```
 
-| Key | Type | Default | Notes |
-| --- | --- | --- | --- |
-| `audit.enabled` | bool | `true` | Disables the audit pipeline entirely when false (no rows written, no portal data). |
-| `audit.retention_days` | int | `30` | Documented retention target. mcp-test does not currently auto-prune; deploy a cron job against the `audit_events` table if you need it. |
-| `audit.redact_keys` | []string | `[password, token, secret, authorization, api_key, credentials]` | Case-insensitive substring match. Any tool-call argument key matching one of these gets its value replaced with `[redacted]` before the row is written. |
+<div class="config-keys" markdown>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">audit.enabled</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">bool</span></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">true</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+Disables the audit pipeline entirely when false (no rows written, no portal data).
+</div>
+</div>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">audit.retention_days</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">int</span></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">30</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+Documented retention target. mcp-test does not currently auto-prune; deploy a cron job against the `audit_events` table if you need it.
+</div>
+</div>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">audit.redact_keys</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">[]string</span></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">[password, token, secret, authorization, api_key, credentials]</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+Case-insensitive substring match. Any tool-call argument key matching one of these gets its value replaced with `[redacted]` before the row is written.
+</div>
+</div>
+
+</div>
 
 ## portal
 
@@ -177,13 +591,74 @@ portal:
   oidc_redirect_path: /portal/auth/callback
 ```
 
-| Key | Type | Default | Notes |
-| --- | --- | --- | --- |
-| `portal.enabled` | bool | `false` | Master toggle. Disabling skips loading the session store and mounting the portal/admin APIs and SPA. |
-| `portal.cookie_name` | string | `mcp_test_session` | Name of the HMAC-signed session cookie. |
-| `portal.cookie_secret` | string | (required when enabled) | At least 16 bytes, 32+ recommended. HMAC key for cookie signing. |
-| `portal.cookie_secure` | bool | `true` | Sets the `Secure` cookie attribute. Leave on in production; turn off for local HTTP-only dev. |
-| `portal.oidc_redirect_path` | string | `/portal/auth/callback` | OIDC redirect URI path; whatever you set must match what the IdP has registered for the portal client. |
+<div class="config-keys" markdown>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">portal.enabled</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">bool</span></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">false</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+Master toggle. Disabling skips loading the session store and mounting the portal / admin APIs and SPA.
+</div>
+</div>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">portal.cookie_name</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">string</span></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">mcp_test_session</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+Name of the HMAC-signed session cookie.
+</div>
+</div>
+
+<div class="config-key config-key--required" markdown>
+<div class="config-key__head">
+<code class="config-key__name">portal.cookie_secret</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">string</span></span>
+<span class="config-key__chip config-key__chip--required"><span class="config-key__chip-label">required when</span><span class="config-key__chip-value">portal.enabled</span></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+At least 16 bytes, 32+ recommended. HMAC key for cookie signing.
+</div>
+</div>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">portal.cookie_secure</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">bool</span></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">true</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+Sets the `Secure` cookie attribute. Leave on in production; turn off for local HTTP-only dev.
+</div>
+</div>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">portal.oidc_redirect_path</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">string</span></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">/portal/auth/callback</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+OIDC redirect URI path. Whatever you set must match what the IdP has registered for the portal client.
+</div>
+</div>
+
+</div>
 
 ## tools
 
@@ -197,12 +672,61 @@ tools:
   streaming: { enabled: true }
 ```
 
-| Key | Type | Default | Notes |
-| --- | --- | --- | --- |
-| `tools.identity.enabled` | bool | `false` | `whoami`, `echo`, `headers`. |
-| `tools.data.enabled` | bool | `false` | `fixed_response`, `sized_response`, `lorem`. |
-| `tools.failure.enabled` | bool | `false` | `error`, `slow`, `flaky`. |
-| `tools.streaming.enabled` | bool | `false` | `progress`, `long_output`, `chatty`. |
+<div class="config-keys" markdown>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">tools.identity.enabled</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">bool</span></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">false</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+`whoami`, `echo`, `headers`.
+</div>
+</div>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">tools.data.enabled</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">bool</span></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">false</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+`fixed_response`, `sized_response`, `lorem`.
+</div>
+</div>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">tools.failure.enabled</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">bool</span></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">false</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+`error`, `slow`, `flaky`.
+</div>
+</div>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">tools.streaming.enabled</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">bool</span></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">false</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+`progress`, `long_output`, `chatty`.
+</div>
+</div>
+
+</div>
 
 A toolkit must be enabled in config for its tools to be registered
 with the MCP server. The example and dev configs enable all four.

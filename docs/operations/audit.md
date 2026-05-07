@@ -21,21 +21,74 @@ Cascade delete on the foreign key keeps retention atomic: deleting an `audit_eve
 
 ## What gets recorded
 
-| Column | Source |
-| --- | --- |
-| `id` | UUID generated server-side. |
-| `ts` | UTC timestamp at the start of the call. |
-| `duration_ms` | End-to-end time the tool took, including the auth chain. |
-| `request_id` | UUID generated per call; useful for correlating across logs. |
-| `session_id` | The MCP session ID the SDK assigned at initialize. |
-| `user_subject` / `user_email` / `auth_type` / `api_key_name` | Resolved identity from the auth chain. |
-| `tool_name` / `tool_group` | Which tool, and which category. |
-| `parameters` | Sanitized arguments (JSONB). Keys matching `audit.redact_keys` have their values replaced with `"[redacted]"`. |
-| `success` / `error_message` / `error_category` | Outcome. `error_category` is a short label (`auth`, `tool`, `protocol`, etc.) for filtering. |
-| `request_chars` / `response_chars` / `content_blocks` | Sizing of input args and the result. Useful for spotting size-cap issues. |
-| `transport` | Always `"http"` today. |
-| `source` | `"mcp"` for real client calls, `"portal-tryit"` for portal-driven invocations. |
-| `remote_addr` / `user_agent` | From the inbound HTTP headers. |
+<div class="def-cards" markdown>
+
+<div class="def-card" markdown>
+<div class="def-card__head"><code class="def-card__name">id</code></div>
+<div class="def-card__body" markdown>UUID generated server-side.</div>
+</div>
+
+<div class="def-card" markdown>
+<div class="def-card__head"><code class="def-card__name">ts</code></div>
+<div class="def-card__body" markdown>UTC timestamp at the start of the call.</div>
+</div>
+
+<div class="def-card" markdown>
+<div class="def-card__head"><code class="def-card__name">duration_ms</code></div>
+<div class="def-card__body" markdown>End-to-end time the tool took, including the auth chain.</div>
+</div>
+
+<div class="def-card" markdown>
+<div class="def-card__head"><code class="def-card__name">request_id</code></div>
+<div class="def-card__body" markdown>UUID generated per call; useful for correlating across logs.</div>
+</div>
+
+<div class="def-card" markdown>
+<div class="def-card__head"><code class="def-card__name">session_id</code></div>
+<div class="def-card__body" markdown>The MCP session ID the SDK assigned at initialize.</div>
+</div>
+
+<div class="def-card" markdown>
+<div class="def-card__head"><code class="def-card__name">user_subject / user_email / auth_type / api_key_name</code></div>
+<div class="def-card__body" markdown>Resolved identity from the auth chain.</div>
+</div>
+
+<div class="def-card" markdown>
+<div class="def-card__head"><code class="def-card__name">tool_name / tool_group</code></div>
+<div class="def-card__body" markdown>Which tool, and which category.</div>
+</div>
+
+<div class="def-card" markdown>
+<div class="def-card__head"><code class="def-card__name">parameters</code></div>
+<div class="def-card__body" markdown>Sanitized arguments (JSONB). Keys matching `audit.redact_keys` have their values replaced with `"[redacted]"`.</div>
+</div>
+
+<div class="def-card" markdown>
+<div class="def-card__head"><code class="def-card__name">success / error_message / error_category</code></div>
+<div class="def-card__body" markdown>Outcome. `error_category` is a short label (`auth`, `tool`, `protocol`, etc.) for filtering.</div>
+</div>
+
+<div class="def-card" markdown>
+<div class="def-card__head"><code class="def-card__name">request_chars / response_chars / content_blocks</code></div>
+<div class="def-card__body" markdown>Sizing of input args and the result. Useful for spotting size-cap issues.</div>
+</div>
+
+<div class="def-card" markdown>
+<div class="def-card__head"><code class="def-card__name">transport</code></div>
+<div class="def-card__body" markdown>Always `"http"` today.</div>
+</div>
+
+<div class="def-card" markdown>
+<div class="def-card__head"><code class="def-card__name">source</code></div>
+<div class="def-card__body" markdown>`"mcp"` for real client calls, `"portal-tryit"` for portal-driven invocations.</div>
+</div>
+
+<div class="def-card" markdown>
+<div class="def-card__head"><code class="def-card__name">remote_addr / user_agent</code></div>
+<div class="def-card__body" markdown>From the inbound HTTP headers.</div>
+</div>
+
+</div>
 
 See [Database & Migrations](../configuration/database.md#schema) for
 the exact DDL and indexes.
@@ -56,14 +109,69 @@ p50 / p95 latency, unique users / tools, and a recent-activity table.
 
 ## REST endpoints
 
-| Endpoint | Returns |
-| --- | --- |
-| `GET /api/v1/portal/audit/events` | Paginated event list. Query params: `from`, `to` (RFC 3339), `tool`, `user`, `session`, `success` (`true`/`false`), `q` (free text), `limit`, `offset`. Plus the JSONB filters in the next section. |
-| `GET /api/v1/portal/audit/events/{id}` | Single event with captured payload (when present). |
-| `GET /api/v1/portal/audit/export` | NDJSON stream of summary rows. Same filter surface as `/events`. Capped at 100,000 rows per request. |
-| `GET /api/v1/portal/audit/timeseries` | Bucketed counts. Query params: `from`, `to`, `bucket` (Go duration like `1m`, `5m`). Returns `[{time, count, errors, avg_duration_ms}]`. |
-| `GET /api/v1/portal/audit/breakdown` | Group-by aggregations. Query param: `by` (one of `tool`, `user`, `success`, `auth_type`). Returns `[{key, count, errors}]`. |
-| `GET /api/v1/portal/dashboard` | The 1-hour summary. |
+<div class="api-endpoints" markdown>
+
+<div class="api-endpoint api-endpoint--get" markdown>
+<div class="api-endpoint__head">
+<span class="api-endpoint__method api-endpoint__method--get">GET</span>
+<code class="api-endpoint__path">/api/v1/portal/audit/events</code>
+</div>
+<div class="api-endpoint__body" markdown>
+Paginated event list. Query params: `from`, `to` (RFC 3339), `tool`, `user`, `session`, `success` (`true` / `false`), `q` (free text), `limit`, `offset`. Plus the JSONB filters in the next section.
+</div>
+</div>
+
+<div class="api-endpoint api-endpoint--get" markdown>
+<div class="api-endpoint__head">
+<span class="api-endpoint__method api-endpoint__method--get">GET</span>
+<code class="api-endpoint__path">/api/v1/portal/audit/events/{id}</code>
+</div>
+<div class="api-endpoint__body" markdown>
+Single event with captured payload (when present).
+</div>
+</div>
+
+<div class="api-endpoint api-endpoint--get" markdown>
+<div class="api-endpoint__head">
+<span class="api-endpoint__method api-endpoint__method--get">GET</span>
+<code class="api-endpoint__path">/api/v1/portal/audit/export</code>
+</div>
+<div class="api-endpoint__body" markdown>
+NDJSON stream of summary rows. Same filter surface as `/events`. Capped at 100,000 rows per request.
+</div>
+</div>
+
+<div class="api-endpoint api-endpoint--get" markdown>
+<div class="api-endpoint__head">
+<span class="api-endpoint__method api-endpoint__method--get">GET</span>
+<code class="api-endpoint__path">/api/v1/portal/audit/timeseries</code>
+</div>
+<div class="api-endpoint__body" markdown>
+Bucketed counts. Query params: `from`, `to`, `bucket` (Go duration like `1m`, `5m`). Returns `[{time, count, errors, avg_duration_ms}]`.
+</div>
+</div>
+
+<div class="api-endpoint api-endpoint--get" markdown>
+<div class="api-endpoint__head">
+<span class="api-endpoint__method api-endpoint__method--get">GET</span>
+<code class="api-endpoint__path">/api/v1/portal/audit/breakdown</code>
+</div>
+<div class="api-endpoint__body" markdown>
+Group-by aggregations. Query param: `by` (one of `tool`, `user`, `success`, `auth_type`). Returns `[{key, count, errors}]`.
+</div>
+</div>
+
+<div class="api-endpoint api-endpoint--get" markdown>
+<div class="api-endpoint__head">
+<span class="api-endpoint__method api-endpoint__method--get">GET</span>
+<code class="api-endpoint__path">/api/v1/portal/dashboard</code>
+</div>
+<div class="api-endpoint__body" markdown>
+The 1-hour summary.
+</div>
+</div>
+
+</div>
 
 ### JSONB filters
 

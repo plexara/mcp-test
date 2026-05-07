@@ -10,18 +10,59 @@ binary via `go:embed all:dist`. There's no separate frontend server.
 
 ## Routes
 
-| Route | What |
-| --- | --- |
-| `/portal/login` | Sign in with OIDC or paste an API key. |
-| `/portal/` | Dashboard: 1-hour stats and recent activity. |
-| `/portal/tools` | Tool catalog grouped by category. |
-| `/portal/tools/<name>` | Per-tool detail with Overview / Try It tabs. |
-| `/portal/audit` | Filterable event browser with pagination, click-to-expand drawer, JSONB filters, SSE live tail. |
-| `/portal/audit/compare` | Side-by-side structural diff of two events; staged from the drawer's Compare button (`?a=<id>&b=<id>`). |
-| `/portal/keys` | DB-backed API key management. |
-| `/portal/config` | Read-only JSON view of the running config (secrets redacted). |
-| `/portal/wellknown` | Pretty-print of the protected-resource and authorization-server metadata that gateways read. |
-| `/portal/about` | Description of the server, the categories, and the live `server.instructions`. |
+<div class="def-cards" markdown>
+
+<div class="def-card" markdown>
+<div class="def-card__head"><code class="def-card__name">/portal/login</code></div>
+<div class="def-card__body" markdown>Sign in with OIDC or paste an API key.</div>
+</div>
+
+<div class="def-card" markdown>
+<div class="def-card__head"><code class="def-card__name">/portal/</code></div>
+<div class="def-card__body" markdown>Dashboard: 1-hour stats and recent activity.</div>
+</div>
+
+<div class="def-card" markdown>
+<div class="def-card__head"><code class="def-card__name">/portal/tools</code></div>
+<div class="def-card__body" markdown>Tool catalog grouped by category.</div>
+</div>
+
+<div class="def-card" markdown>
+<div class="def-card__head"><code class="def-card__name">/portal/tools/&lt;name&gt;</code></div>
+<div class="def-card__body" markdown>Per-tool detail with Overview / Try It tabs.</div>
+</div>
+
+<div class="def-card" markdown>
+<div class="def-card__head"><code class="def-card__name">/portal/audit</code></div>
+<div class="def-card__body" markdown>Filterable event browser with pagination, click-to-expand drawer, JSONB filters, SSE live tail.</div>
+</div>
+
+<div class="def-card" markdown>
+<div class="def-card__head"><code class="def-card__name">/portal/audit/compare</code></div>
+<div class="def-card__body" markdown>Side-by-side structural diff of two events; staged from the drawer's Compare button (`?a=<id>&b=<id>`).</div>
+</div>
+
+<div class="def-card" markdown>
+<div class="def-card__head"><code class="def-card__name">/portal/keys</code></div>
+<div class="def-card__body" markdown>DB-backed API key management.</div>
+</div>
+
+<div class="def-card" markdown>
+<div class="def-card__head"><code class="def-card__name">/portal/config</code></div>
+<div class="def-card__body" markdown>Read-only JSON view of the running config (secrets redacted).</div>
+</div>
+
+<div class="def-card" markdown>
+<div class="def-card__head"><code class="def-card__name">/portal/wellknown</code></div>
+<div class="def-card__body" markdown>Pretty-print of the protected-resource and authorization-server metadata that gateways read.</div>
+</div>
+
+<div class="def-card" markdown>
+<div class="def-card__head"><code class="def-card__name">/portal/about</code></div>
+<div class="def-card__body" markdown>Description of the server, the categories, and the live `server.instructions`.</div>
+</div>
+
+</div>
 
 ## Authentication
 

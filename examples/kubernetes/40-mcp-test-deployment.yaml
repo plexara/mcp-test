@@ -1,0 +1,102 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-test
+  namespace: mcp-test
+  labels:
+    app: mcp-test
+    app.kubernetes.io/name: mcp-test
+    app.kubernetes.io/component: server
+    app.kubernetes.io/part-of: mcp-test
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: mcp-test
+  template:
+    metadata:
+      labels:
+        app: mcp-test
+        app.kubernetes.io/name: mcp-test
+        app.kubernetes.io/component: server
+        app.kubernetes.io/part-of: mcp-test
+      annotations:
+        # Force a rollout when ConfigMap or Secret content changes.
+        # install.sh patches these to a SHA256 of the on-disk file
+        # contents; replace manually with `kubectl rollout restart` if
+        # you edit the manifests outside the script.
+        config-hash: "0"
+        secret-hash: "0"
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: mcp-test
+          image: ghcr.io/plexara/mcp-test:v1.2.0
+          imagePullPolicy: IfNotPresent
+          args:
+            - --config
+            - /etc/mcp-test/mcp-test.yaml
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: MCPTEST_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-test
+                  key: DATABASE_URL
+            - name: MCPTEST_COOKIE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-test
+                  key: COOKIE_SECRET
+            - name: MCPTEST_DEV_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-test
+                  key: DEV_KEY
+          volumeMounts:
+            - name: config
+              mountPath: /etc/mcp-test
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: config
+          configMap:
+            name: mcp-test
