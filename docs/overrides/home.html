@@ -63,45 +63,97 @@
 <section class="plex-shots" aria-label="Portal screenshots">
   <div class="plex-shots__inner">
     <div class="plex-shots__head">
-      <div>
-        <span class="plex-section__eyebrow">Portal preview</span>
-        <h2>Inspect every call from the browser</h2>
-      </div>
-      <div class="plex-shots__nav" aria-hidden="true">
-        <button class="plex-shots__btn" data-shots-prev type="button" aria-label="Previous screenshot">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
-        </button>
-        <button class="plex-shots__btn" data-shots-next type="button" aria-label="Next screenshot">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
-        </button>
-      </div>
+      <span class="plex-section__eyebrow">Portal preview</span>
+      <h2>Inspect every call from the browser</h2>
+      <p class="plex-shots__lede">Click any frame to open it full-size. Use the side rails or the arrow keys to step through.</p>
     </div>
 
-    <div class="plex-shots__viewport">
-    <div class="plex-shots__track" data-shots-track>
-      {% set shots = [
-        ["dashboard",   "Dashboard",     "Live counts, error rate, p50/p95 latency, and the most recent calls across every tool."],
-        ["audit",       "Audit log",     "Every call, filterable by tool, user, status, and source. Sanitized parameters and full response shape are one click away."],
-        ["tools",       "Tools",         "Twelve test fixtures grouped by category. Pick one to see its schema, run it, or browse the audit rows it produced."],
-        ["tools-tryit", "Try it",        "Per-tool form generated from the JSON schema. Sliders, dropdowns, and inline help; progress notifications stream in over SSE."],
-        ["keys",        "API keys",      "Create or revoke Postgres-backed bcrypt keys. Plaintext is shown once, then never again."],
-        ["wellknown",   "Discovery",     "RFC 9728 protected-resource metadata and the upstream OIDC authorization-server document, rendered the way an MCP client will see them."],
-        ["config",      "Config",        "Read-only YAML view of the running server, with secrets masked. Useful for sanity-checking what's actually loaded."]
-      ] %}
-      {% for slug, title, body in shots %}
-      <figure class="plex-shots__slide">
-        <div class="plex-shots__frame">
-          <img src="{{ ('images/portal/' ~ slug ~ '-light.png') | url }}" alt="Portal {{ title }} screen, light theme" data-theme="light" loading="lazy" decoding="async" />
-          <img src="{{ ('images/portal/' ~ slug ~ '-dark.png')  | url }}" alt="Portal {{ title }} screen, dark theme"  data-theme="dark"  loading="lazy" decoding="async" />
-        </div>
-        <figcaption class="plex-shots__caption">
-          <span class="eyebrow">Portal</span>
-          <h3>{{ title }}</h3>
-          <p>{{ body }}</p>
-        </figcaption>
-      </figure>
-      {% endfor %}
+    <div class="plex-shots__stage">
+      <button class="plex-shots__rail plex-shots__rail--prev" data-shots-prev type="button" aria-label="Previous screenshot">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+      </button>
+
+      <div class="plex-shots__viewport">
+      <div class="plex-shots__track" data-shots-track>
+        {% set shots = [
+          ["dashboard",     "Dashboard",     "Live counts, error rate, p50/p95 latency, and the most recent calls across every tool."],
+          ["audit",         "Audit log",     "Every call, filterable by tool, user, status, and source. Sanitized parameters and full response shape are one click away."],
+          ["audit-drawer",  "Inspection drawer", "Click any row for the four-tab side panel: Overview / Request / Response / Notifications. Replay and Compare are inline; the URL deep-links to the open event so a drawer state is shareable."],
+          ["audit-compare", "Side-by-side compare", "Stash any two events and the comparison page renders a JSON-path-aware structural diff. Walks objects and arrays by key/index, so reordered keys don't masquerade as changes."],
+          ["audit-livetail","Live tail",     "SSE stream of new audit events as they're written, surfaced in a fixed-cap buffer above the historical filter view. The table itself stays still so the live read doesn't blow away your filtered context."],
+          ["audit-jsonb",   "JSONB filters", "Server-side path filters compile to JSONB containment against the existing GIN indexes: param.<dotted>=v, response.<dotted>=v, header.<name>=v, has=<column>. Type-detected values; quote to force string."],
+          ["tools",         "Tools",         "Twelve test fixtures grouped by category. Pick one to see its schema, run it, or browse the audit rows it produced."],
+          ["tools-tryit",   "Try it",        "Per-tool form generated from the JSON schema. Sliders, dropdowns, and inline help; progress notifications stream in over SSE."],
+          ["keys",          "API keys",      "Create or revoke Postgres-backed bcrypt keys. Plaintext is shown once, then never again."],
+          ["wellknown",     "Discovery",     "RFC 9728 protected-resource metadata and the upstream OIDC authorization-server document, rendered the way an MCP client will see them."],
+          ["config",        "Config",        "Read-only YAML view of the running server, with secrets masked. Useful for sanity-checking what's actually loaded."]
+        ] %}
+        {% for slug, title, body in shots %}
+        <figure class="plex-shots__slide">
+          <button
+            class="plex-shots__frame"
+            type="button"
+            data-shots-zoom
+            data-zoom-slug="{{ slug }}"
+            data-zoom-title="{{ title }}"
+            data-zoom-body="{{ body }}"
+            data-zoom-light="{{ ('images/portal/' ~ slug ~ '-light.png') | url }}"
+            data-zoom-dark="{{ ('images/portal/' ~ slug ~ '-dark.png') | url }}"
+            aria-label="Open {{ title }} screenshot full size"
+          >
+            <img src="{{ ('images/portal/' ~ slug ~ '-light.png') | url }}" alt="Portal {{ title }} screen, light theme" data-theme="light" loading="lazy" decoding="async" />
+            <img src="{{ ('images/portal/' ~ slug ~ '-dark.png')  | url }}" alt="Portal {{ title }} screen, dark theme"  data-theme="dark"  loading="lazy" decoding="async" />
+            <span class="plex-shots__zoomhint" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 8V3h5"/><path d="M21 8V3h-5"/><path d="M3 16v5h5"/><path d="M21 16v5h-5"/>
+              </svg>
+            </span>
+          </button>
+          <figcaption class="plex-shots__caption">
+            <span class="eyebrow">Portal</span>
+            <h3>{{ title }}</h3>
+            <p>{{ body }}</p>
+          </figcaption>
+        </figure>
+        {% endfor %}
+      </div>
+      </div>
+
+      <button class="plex-shots__rail plex-shots__rail--next" data-shots-next type="button" aria-label="Next screenshot">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+      </button>
     </div>
+
+    <div class="plex-shots__counter" data-shots-counter aria-live="polite"></div>
+  </div>
+
+  {# Lightbox modal. Hidden by default; shots.js shows it on slide click. #}
+  <div class="plex-lightbox" data-shots-lightbox hidden role="dialog" aria-modal="true" aria-labelledby="plex-lightbox-title">
+    <div class="plex-lightbox__backdrop" data-shots-close></div>
+    <div class="plex-lightbox__shell">
+      <header class="plex-lightbox__bar">
+        <div class="plex-lightbox__meta">
+          <span class="plex-lightbox__eyebrow">Portal</span>
+          <h3 class="plex-lightbox__title" id="plex-lightbox-title"></h3>
+        </div>
+        <div class="plex-lightbox__controls">
+          <span class="plex-lightbox__count" data-lightbox-count aria-live="polite"></span>
+          <button class="plex-lightbox__navbtn" data-lightbox-prev type="button" aria-label="Previous screenshot">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+          </button>
+          <button class="plex-lightbox__navbtn" data-lightbox-next type="button" aria-label="Next screenshot">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+          </button>
+          <button class="plex-lightbox__close" data-shots-close type="button" aria-label="Close screenshot">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+          </button>
+        </div>
+      </header>
+      <figure class="plex-lightbox__stage">
+        <img class="plex-lightbox__img" data-lightbox-img-light data-theme="light" alt="" />
+        <img class="plex-lightbox__img" data-lightbox-img-dark  data-theme="dark"  alt="" />
+        <figcaption class="plex-lightbox__caption" data-lightbox-body></figcaption>
+      </figure>
     </div>
   </div>
 </section>

@@ -354,13 +354,20 @@ docs-serve:
 ##              Playwright through every portal page. Requires the binary to
 ##              be running on $(SHOTS_BASE_URL) (default http://localhost:8080).
 ##              Re-run after any portal UI change.
+##
+##              Sources .env.dev for MCPTEST_DEV_KEY so the captured-portal API
+##              key matches the running binary's accepted file key. Override
+##              SHOTS_API_KEY explicitly to point at a different deployment
+##              (e.g. staging); that wins over .env.dev.
 SHOTS_BASE_URL ?= http://localhost:8080
-SHOTS_API_KEY  ?= devkey-please-change
-screenshots:
+screenshots: dev-secrets
 	@command -v node >/dev/null || { echo "node is required"; exit 1; }
-	@cd scripts/screenshots && \
+	@. ./.env.dev && \
+	    KEY="$${SHOTS_API_KEY:-$$MCPTEST_DEV_KEY}" && \
+	    if [ -z "$$KEY" ]; then echo "no API key: set SHOTS_API_KEY or run make dev-secrets"; exit 1; fi && \
+	    cd scripts/screenshots && \
 	    (test -d node_modules || npm install) && \
-	    MCPTEST_BASE_URL=$(SHOTS_BASE_URL) MCPTEST_DEV_KEY=$(SHOTS_API_KEY) node screenshots.mjs
+	    MCPTEST_BASE_URL=$(SHOTS_BASE_URL) MCPTEST_DEV_KEY="$$KEY" node screenshots.mjs
 
 ## run: Build and run
 run: build

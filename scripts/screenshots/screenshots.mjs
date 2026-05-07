@@ -34,6 +34,11 @@ const OUT_DIR = resolve(REPO_ROOT, "docs/images/portal");
 const VIEWPORT = { width: 1440, height: 900 };
 const DEVICE_SCALE = 2; // retina-sharp screenshots
 
+// PAGES: each entry produces one screenshot per theme. `path` may be a
+// string or a 0-arg function (so deep-link targets can reference state
+// stashed by seed(), e.g. DRAWER_TARGET_ID). `prep` runs after navigation
+// to drive the UI into the right state for the capture (open a drawer,
+// toggle live tail, expand a panel).
 const PAGES = [
   { slug: "login",     path: "/portal/login",          requiresAuth: false, prep: null },
   { slug: "dashboard", path: "/portal/",               requiresAuth: true,  prep: null },
@@ -46,6 +51,72 @@ const PAGES = [
       await page.waitForTimeout(200);
     } },
   { slug: "audit",     path: "/portal/audit",          requiresAuth: true,  prep: null },
+
+  // v1.2 inspection-utility captures.
+  //
+  // audit-drawer: deep-link to a seeded event with payload so the four
+  // tabs (Overview / Request / Response / Notifications) all have
+  // meaningful content. Targets a successful "progress" or similar tool
+  // call so notifications render.
+  { slug: "audit-drawer",
+    path: () => `/portal/audit?id=${DRAWER_TARGET_ID}`,
+    requiresAuth: true,
+    prep: async (page) => {
+      // Wait for the drawer panel (role=dialog) to mount and for the
+      // detail query to resolve so the header shows the tool name
+      // rather than the loading spinner.
+      await page.waitForSelector('[role="dialog"][aria-label="Audit event detail"]', { timeout: 5000 });
+      await page.waitForTimeout(500);
+    } },
+
+  // audit-compare: side-by-side diff. Two seeded event ids piped via
+  // the URL params; the page renders Summary + per-payload diff trees.
+  { slug: "audit-compare",
+    path: () => `/portal/audit/compare?a=${COMPARE_A_ID}&b=${COMPARE_B_ID}`,
+    requiresAuth: true,
+    prep: async (page) => {
+      // Wait for both event queries to resolve before snapping; the
+      // headers go from "Loading..." to the tool name on success.
+      await page.waitForSelector('text="Compare events"', { timeout: 5000 });
+      await page.waitForLoadState("networkidle");
+      await page.waitForTimeout(400);
+    } },
+
+  // audit-livetail: live tail toggled on with the buffer visible.
+  // Doesn't actually need new SSE traffic to capture; the toggle is
+  // visually distinctive (animate-pulse Radio icon, success-colored
+  // border, "Waiting for events..." or buffer rendered above table).
+  { slug: "audit-livetail",
+    path: "/portal/audit",
+    requiresAuth: true,
+    prep: async (page) => {
+      const tail = page.locator('button:has-text("Live tail")').first();
+      await tail.click();
+      // Give the SSE handshake a beat to land before snapping. The
+      // server emits a `: connected` comment immediately, but the
+      // empty-buffer state ("Waiting for events...") is also a valid
+      // shot.
+      await page.waitForTimeout(800);
+    } },
+
+  // audit-jsonb: filter editor expanded with one sample filter applied.
+  { slug: "audit-jsonb",
+    path: "/portal/audit",
+    requiresAuth: true,
+    prep: async (page) => {
+      const toggle = page.locator('button:has-text("JSONB filters")').first();
+      await toggle.click();
+      await page.waitForTimeout(200);
+      // Add a representative `param.user.id=alice` filter so the
+      // editor and the active-filter chip both render.
+      const pathInput = page.locator('input[placeholder="dotted.path"]').first();
+      const valueInput = page.locator('input[placeholder="value"]').first();
+      await pathInput.fill("user.id");
+      await valueInput.fill("alice");
+      await page.locator('button:has-text("add")').first().click();
+      await page.waitForTimeout(400);
+    } },
+
   { slug: "keys",      path: "/portal/keys",           requiresAuth: true,  prep: null },
   { slug: "config",    path: "/portal/config",         requiresAuth: true,  prep: null },
   { slug: "wellknown", path: "/portal/wellknown",      requiresAuth: true,  prep: null },
@@ -157,8 +228,11 @@ async function seed() {
   await client.connect();
 
   try {
-    console.log("→ truncating audit_events + api_keys");
-    await client.query("TRUNCATE audit_events");
+    console.log("→ truncating audit_events + audit_payloads + api_keys");
+    // audit_payloads cascades on audit_events delete, but TRUNCATE is
+    // explicit per table so the order doesn't matter here.
+    await client.query("TRUNCATE audit_payloads");
+    await client.query("TRUNCATE audit_events CASCADE");
     await client.query("TRUNCATE api_keys");
 
     console.log("→ inserting api_keys");
@@ -214,11 +288,141 @@ async function seed() {
       values,
     );
 
-    console.log(`✓ seeded ${events.length} audit events + ${apiKeys.length} api keys`);
+    // Seed audit_payloads for the 20 most-recent events so the v1.2
+    // drawer / compare / inspection screenshots have meaningful Request
+    // / Response / Notifications tabs to render. The other 80 events
+    // stay summary-only; that's a realistic mix for a deployment with
+    // capture_payloads on but post-retention payload pruning.
+    console.log("→ inserting audit_payloads (20 most-recent events)");
+    const recent = [...events]
+      .sort((a, b) => b.ts.getTime() - a.ts.getTime())
+      .slice(0, 20);
+    for (const e of recent) {
+      // Build payload request_params from the seeded summary params (when
+      // present), and inject a realistic gateway-context block: `user.id`
+      // mirrors the audit row's identity so demo JSONB filters like
+      // `param.user.id=alice` actually return matches; tenant/region are
+      // there to make the JSON view look like a real production payload.
+      const baseParams = e.parameters ? JSON.parse(e.parameters) : {};
+      const userId = e.user_email
+        ? e.user_email.split("@")[0]
+        : (e.api_key_name || "anonymous");
+      const params = {
+        ...baseParams,
+        user: {
+          id: userId,
+          tenant: pick(["acme", "globex", "initech"]),
+        },
+        request_id: e.request_id,
+      };
+      let result = null;
+      let errBlob = null;
+      let notifications = null;
+      if (e.success) {
+        // Build a plausible-looking CallToolResult JSON for the Response tab.
+        result = {
+          content: [
+            { type: "text", text: makeResponseText(e.tool_name, params) },
+          ],
+          isError: false,
+        };
+        if (e.tool_name === "progress" || e.tool_name === "chatty") {
+          notifications = makeProgressNotifications(e.ts, params);
+        }
+      } else {
+        errBlob = { message: e.error_message, category: e.error_category };
+      }
+      await client.query(
+        `INSERT INTO audit_payloads (
+          event_id, jsonrpc_method,
+          request_params, request_size_bytes,
+          request_headers, request_remote_addr,
+          response_result, response_error, response_size_bytes,
+          notifications, notifications_truncated,
+          captured_at
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+        [
+          e.id,
+          "tools/call",
+          JSON.stringify(params),
+          e.request_chars,
+          JSON.stringify({
+            "User-Agent": [e.user_agent],
+            "X-Forwarded-For": [e.remote_addr],
+            "Content-Type": ["application/json"],
+            // Sensitive headers are stored redacted; mirror the pkg/auth
+            // RedactHeaders contract so the drawer Request tab shows the
+            // [redacted] values an operator will see in production.
+            "Authorization": ["[redacted]"],
+            "Cookie": ["[redacted]"],
+          }),
+          e.remote_addr,
+          result ? JSON.stringify(result) : null,
+          errBlob ? JSON.stringify(errBlob) : null,
+          e.response_chars,
+          notifications ? JSON.stringify(notifications) : null,
+          false,
+          e.ts,
+        ],
+      );
+    }
+
+    console.log(`✓ seeded ${events.length} audit events (${recent.length} with payloads) + ${apiKeys.length} api keys`);
+
+    // Stash the two most-recent successful event ids so the capture
+    // step can navigate to /audit?id=<id> and /audit/compare?a=<>&b=<>
+    // without guessing.
+    const successful = recent.filter((e) => e.success);
+    if (successful.length < 2) {
+      throw new Error("seed produced fewer than 2 successful payload events; reduce errorRate or increase event count");
+    }
+    DRAWER_TARGET_ID = successful[0].id;
+    COMPARE_A_ID    = successful[0].id;
+    COMPARE_B_ID    = successful[1].id;
   } finally {
     await client.end();
   }
 }
+
+// makeResponseText shapes a plausible response-block string per tool so
+// the Response tab renders something that looks like the real call.
+function makeResponseText(tool, params) {
+  switch (tool) {
+    case "echo":           return JSON.stringify({ ...params, echoed_at: new Date().toISOString() });
+    case "fixed_response": return JSON.stringify({ key: params.key, value: "static-fixture" });
+    case "sized_response": return "x".repeat(Math.min(params.size, 240)) + "...";
+    case "lorem":          return "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod...";
+    case "whoami":         return JSON.stringify({ subject: "alice@example.com", auth_type: "oidc" });
+    case "headers":        return JSON.stringify({ "User-Agent": "claude-code/1.0", "X-Forwarded-For": "10.0.1.42" });
+    case "slow":           return JSON.stringify({ slept_ms: params.milliseconds });
+    case "progress":       return JSON.stringify({ steps_completed: params.steps });
+    default:               return `result for ${tool}`;
+  }
+}
+
+function makeProgressNotifications(eventTs, params) {
+  const steps = params.steps ?? 5;
+  const stepMs = params.step_ms ?? 200;
+  const out = [];
+  for (let i = 1; i <= steps; i++) {
+    out.push({
+      ts: new Date(eventTs.getTime() - (steps - i) * stepMs).toISOString(),
+      method: "notifications/progress",
+      params: {
+        progressToken: "demo-token",
+        progress: i,
+        total: steps,
+        message: `step ${i}/${steps}`,
+      },
+    });
+  }
+  return out;
+}
+
+// Filled by seed() and consumed by the capture step's prep functions.
+let DRAWER_TARGET_ID = null;
+let COMPARE_A_ID = null;
+let COMPARE_B_ID = null;
 
 // ---------------------------------------------------------------------------
 // Capture
@@ -262,7 +466,8 @@ async function capture() {
         { themeSlug: theme.slug, apiKey: API_KEY, requiresAuth: target.requiresAuth },
       );
 
-      await page.goto(`${BASE_URL}${target.path}`, { waitUntil: "networkidle" });
+      const targetPath = typeof target.path === "function" ? target.path() : target.path;
+      await page.goto(`${BASE_URL}${targetPath}`, { waitUntil: "networkidle" });
       // Some portal pages trigger queries; wait a short beat for them to settle.
       await page.waitForTimeout(500);
 

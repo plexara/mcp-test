@@ -1363,11 +1363,11 @@ body,
 @media (min-width: 1024px) { .plex-shots__inner { padding: 0 32px; } }
 
 .plex-shots__head {
-  display: flex;
-  align-items: end;
-  justify-content: space-between;
-  gap: 1rem;
-  margin-bottom: 1.75rem;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.4rem;
+  margin-bottom: 1.5rem;
+  max-width: 720px;
 }
 .plex-shots__head h2 {
   font-family: "Outfit", system-ui, sans-serif;
@@ -1375,18 +1375,39 @@ body,
   font-size: clamp(1.4rem, 2vw + 0.75rem, 2rem);
   line-height: 1.15;
   letter-spacing: -0.018em;
-  margin: 0.4rem 0 0;
+  margin: 0;
   color: var(--md-default-fg-color);
 }
 [data-md-color-scheme="slate"] .plex-shots__head h2 { color: #fff; }
-
-.plex-shots__nav {
-  display: flex;
-  gap: 0.5rem;
+.plex-shots__lede {
+  font-family: "DM Sans", system-ui, sans-serif;
+  font-size: 0.875rem;
+  line-height: 1.55;
+  color: var(--md-default-fg-color--light);
+  margin: 0.25rem 0 0;
 }
-.plex-shots__btn {
-  width: 2.4rem;
-  height: 2.4rem;
+
+/* Stage = three-column grid: left rail | viewport | right rail. The rails
+   sit alongside the viewport so the active slide always has its
+   navigation immediately at the edge instead of hunting in the header. */
+.plex-shots__stage {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.75rem;
+  position: relative;
+}
+@media (min-width: 1024px) {
+  .plex-shots__stage { gap: 1rem; }
+}
+
+/* Side-rail nav. Buttons sit at the carousel edges, vertically centered.
+   They're chunkier than the old header buttons so they read as primary
+   navigation, not afterthoughts. */
+.plex-shots__rail {
+  flex: 0 0 auto;
+  width: 2.6rem;
+  height: 2.6rem;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1395,73 +1416,115 @@ body,
   border: 1px solid var(--md-default-fg-color--lightest);
   color: var(--md-default-fg-color);
   cursor: pointer;
-  transition: border-color 160ms ease, color 160ms ease, transform 160ms ease;
+  transition: border-color 180ms ease, color 180ms ease,
+              transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
+              box-shadow 180ms ease;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05),
+              0 8px 24px -12px rgba(15, 23, 42, 0.18);
 }
-.plex-shots__btn:hover {
+@media (min-width: 1024px) {
+  .plex-shots__rail { width: 3rem; height: 3rem; }
+}
+.plex-shots__rail svg { width: 1.25rem; height: 1.25rem; }
+.plex-shots__rail:hover {
   border-color: var(--copper-500);
   color: var(--copper-700);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05),
+              0 12px 28px -10px rgba(20, 184, 171, 0.28);
 }
-.plex-shots__btn:active { transform: scale(0.96); }
-.plex-shots__btn[disabled] { opacity: 0.35; cursor: default; }
-.plex-shots__btn svg { width: 1.1rem; height: 1.1rem; }
-
-[data-md-color-scheme="slate"] .plex-shots__btn {
+.plex-shots__rail--prev:hover { transform: translateX(-2px); }
+.plex-shots__rail--next:hover { transform: translateX(2px); }
+.plex-shots__rail:active { transform: scale(0.96); }
+.plex-shots__rail:focus-visible {
+  outline: 2px solid var(--copper-500);
+  outline-offset: 3px;
+}
+[data-md-color-scheme="slate"] .plex-shots__rail {
   background: var(--midnight-900);
   border-color: var(--midnight-800);
   color: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.45),
+              0 12px 28px -16px rgba(0, 0, 0, 0.6);
 }
-[data-md-color-scheme="slate"] .plex-shots__btn:hover {
+[data-md-color-scheme="slate"] .plex-shots__rail:hover {
   border-color: var(--copper-400);
   color: var(--copper-300);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.45),
+              0 12px 28px -10px rgba(45, 211, 203, 0.28);
 }
 
-/* Outer viewport: clips the off-screen slides. The track itself slides via
-   `transform: translateX(...)` controlled by JS. */
+/* Counter under the stage: "3 / 11". Decimal-tabular figures so the digits
+   don't jiggle as the index changes. */
+.plex-shots__counter {
+  margin: 1rem auto 0;
+  text-align: center;
+  font-family: "DM Sans", system-ui, sans-serif;
+  font-feature-settings: "tnum" 1;
+  font-size: 0.7rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--md-default-fg-color--light);
+}
+[data-md-color-scheme="slate"] .plex-shots__counter { color: var(--midnight-300); }
+.plex-shots__counter strong {
+  color: var(--copper-700);
+  font-weight: 600;
+  margin-right: 0.15em;
+}
+[data-md-color-scheme="slate"] .plex-shots__counter strong { color: var(--copper-300); }
+
+/* Outer viewport: clips off-screen slides. The track inside translates via
+   JS-computed offsets. */
 .plex-shots__viewport {
   overflow: hidden;
-  padding: 0.5rem 0 1.5rem;
+  padding: 0.5rem 0 0.75rem;
 }
 
 .plex-shots__track {
   display: flex;
-  gap: 1.25rem;
+  gap: 1rem;
   transform: translate3d(0, 0, 0);
   transition: transform 520ms cubic-bezier(0.22, 1, 0.36, 1);
   will-change: transform;
 }
 @media (min-width: 1024px) {
-  .plex-shots__track { gap: 1.5rem; }
+  .plex-shots__track { gap: 1.25rem; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .plex-shots__track { transition: none; }
-}
-.plex-shots__track::-webkit-scrollbar { height: 6px; }
-.plex-shots__track::-webkit-scrollbar-thumb {
-  background: var(--copper-500);
-  border-radius: 3px;
+  .plex-shots__track,
+  .plex-shots__slide,
+  .plex-shots__rail,
+  .plex-shots__zoomhint,
+  .plex-shots__frame img { transition: none; }
 }
 
-/* Material's `.md-typeset figure { width: fit-content }` outranks a plain
-   `.plex-shots__slide` selector, so we double up the class for specificity
-   instead of reaching for !important. */
+/* Slides ~30% smaller than the previous layout so neighbors are always
+   peeking in. Material's `.md-typeset figure { width: fit-content }`
+   outranks a plain `.plex-shots__slide` selector, so we double up the
+   class for specificity instead of reaching for !important. */
 .plex-shots__slide.plex-shots__slide {
   flex: 0 0 auto;
-  width: min(66vw, 704px);
+  width: min(72vw, 480px);
   border-radius: var(--plex-radius-lg);
-  overflow: hidden;
   background: var(--md-default-bg-color);
   border: 1px solid var(--md-default-fg-color--lightest);
   display: flex;
   flex-direction: column;
   margin: 0;
+  overflow: hidden;
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04),
               0 12px 32px -16px rgba(15, 23, 42, 0.18);
-  transition: border-color 200ms ease, box-shadow 200ms ease, opacity 520ms ease;
-  opacity: 0.55;
+  transition: border-color 200ms ease, box-shadow 200ms ease,
+              opacity 520ms ease, transform 520ms cubic-bezier(0.22, 1, 0.36, 1);
+  opacity: 0.5;
+  transform: scale(0.96);
 }
-.plex-shots__slide.is-active { opacity: 1; }
 @media (min-width: 1024px) {
-  .plex-shots__slide.plex-shots__slide { width: min(56vw, 832px); }
+  .plex-shots__slide.plex-shots__slide { width: min(40vw, 580px); }
+}
+.plex-shots__slide.is-active {
+  opacity: 1;
+  transform: scale(1);
 }
 .plex-shots__slide:hover {
   border-color: var(--copper-500);
@@ -1475,12 +1538,25 @@ body,
               0 24px 48px -20px rgba(0, 0, 0, 0.6);
 }
 
+/* Frame is now an interactive button (the click target for the lightbox).
+   Strip default button chrome and rebuild as a flush surface. The
+   zoomhint badge slides in on hover/focus to telegraph the action. */
 .plex-shots__frame {
   position: relative;
   aspect-ratio: 1440 / 900;
   background: var(--md-default-bg-color);
   overflow: hidden;
+  border: 0;
   border-bottom: 1px solid var(--md-default-fg-color--lightest);
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  cursor: zoom-in;
+  display: block;
+  width: 100%;
+  text-align: left;
+  transition: filter 220ms ease;
 }
 [data-md-color-scheme="slate"] .plex-shots__frame {
   background: var(--midnight-950);
@@ -1494,14 +1570,52 @@ body,
   object-fit: cover;
   object-position: top center;
   display: block;
+  transition: transform 1200ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.plex-shots__slide.is-active .plex-shots__frame:hover img,
+.plex-shots__slide.is-active .plex-shots__frame:focus-visible img {
+  transform: scale(1.025);
+}
+.plex-shots__frame:focus-visible {
+  outline: 2px solid var(--copper-500);
+  outline-offset: -2px;
 }
 
-/* Theme-gated visibility: show the matching screenshot, hide the other.
-   Defaults assume light scheme; slate scheme flips it. */
+/* Theme-gated visibility: show the matching screenshot, hide the other. */
 .plex-shots__frame img[data-theme="dark"]  { display: none; }
 .plex-shots__frame img[data-theme="light"] { display: block; }
 [data-md-color-scheme="slate"] .plex-shots__frame img[data-theme="light"] { display: none; }
 [data-md-color-scheme="slate"] .plex-shots__frame img[data-theme="dark"]  { display: block; }
+
+/* Zoom hint: small copper-tinted glyph in the top-right corner of the
+   active slide's frame. Stays subtle until hover, then lifts. */
+.plex-shots__zoomhint {
+  position: absolute;
+  top: 0.65rem;
+  right: 0.65rem;
+  width: 1.85rem;
+  height: 1.85rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.5rem;
+  background: rgba(15, 23, 42, 0.55);
+  color: #fff;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 180ms ease, transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
+              background-color 180ms ease;
+  pointer-events: none;
+}
+.plex-shots__zoomhint svg { width: 1rem; height: 1rem; }
+.plex-shots__slide.is-active .plex-shots__zoomhint { opacity: 0.85; transform: translateY(0); }
+.plex-shots__frame:hover .plex-shots__zoomhint,
+.plex-shots__frame:focus-visible .plex-shots__zoomhint {
+  opacity: 1;
+  background: var(--copper-700);
+}
 
 .plex-shots__caption {
   padding: 1rem 1.25rem 1.1rem;
@@ -1540,4 +1654,309 @@ body,
 
 @media (prefers-reduced-motion: reduce) {
   .plex-shots__track { scroll-behavior: auto; }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Lightbox: focused-artifact view of a single screenshot.
+
+   Aesthetic: the rest of the page recedes behind a deep midnight backdrop
+   with a faint copper haze; the screenshot floats as a single object
+   inside a panel that uses the same border / radius / shadow vocabulary
+   as the carousel slides, just sized up. Caption sits below the image
+   in the same Outfit + DM Sans typography so the modal feels like part
+   of the document, not a foreign overlay. Motion vocabulary mirrors the
+   carousel (same cubic-bezier(0.22, 1, 0.36, 1)) so opening one feels
+   like the carousel zooming into focus.
+   ───────────────────────────────────────────────────────────────────── */
+
+.plex-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: grid;
+  place-items: center;
+  padding: clamp(0.75rem, 2vw, 2rem);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.plex-lightbox[hidden] { display: none; }
+.plex-lightbox.is-open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.plex-lightbox__backdrop {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(
+      ellipse at 50% 20%,
+      rgba(20, 184, 171, 0.10) 0%,
+      transparent 60%
+    ),
+    rgba(7, 18, 36, 0.78);
+  backdrop-filter: blur(8px) saturate(120%);
+  -webkit-backdrop-filter: blur(8px) saturate(120%);
+  cursor: zoom-out;
+}
+[data-md-color-scheme="slate"] .plex-lightbox__backdrop {
+  background:
+    radial-gradient(
+      ellipse at 50% 20%,
+      rgba(45, 211, 203, 0.13) 0%,
+      transparent 60%
+    ),
+    rgba(2, 6, 12, 0.82);
+}
+
+.plex-lightbox__shell {
+  position: relative;
+  width: min(96vw, 1480px);
+  max-height: 92vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--md-default-bg-color);
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: var(--plex-radius-lg);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    0 24px 60px -20px rgba(0, 0, 0, 0.55),
+    0 64px 120px -40px rgba(20, 184, 171, 0.18);
+  overflow: hidden;
+  transform: translateY(8px) scale(0.98);
+  transition: transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.plex-lightbox.is-open .plex-lightbox__shell { transform: translateY(0) scale(1); }
+[data-md-color-scheme="slate"] .plex-lightbox__shell {
+  background: var(--midnight-950);
+  border-color: var(--midnight-800);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.03) inset,
+    0 24px 60px -20px rgba(0, 0, 0, 0.7),
+    0 64px 120px -40px rgba(45, 211, 203, 0.18);
+}
+
+/* Top bar: title on the left, count + nav + close on the right. Compact
+   toolbar height (~3.25rem) so the screenshot, not the chrome, is
+   what dominates the viewport. Material's `.md-typeset h3` and span
+   defaults are aggressive on margins; the rules below use element-
+   qualified selectors so they tie on specificity (0,1,1) and source
+   order picks the lightbox style as the winner. */
+.plex-lightbox__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.55rem 0.65rem 0.55rem 1rem;
+  min-height: 0;
+  border-bottom: 1px solid var(--md-default-fg-color--lightest);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--md-default-bg-color) 96%, var(--copper-500)) 0%,
+    var(--md-default-bg-color) 100%
+  );
+}
+[data-md-color-scheme="slate"] .plex-lightbox__bar {
+  border-color: var(--midnight-800);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--midnight-900) 88%, var(--copper-700)) 0%,
+    var(--midnight-900) 100%
+  );
+}
+
+.plex-lightbox__meta {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+/* Element-qualified selectors below: Material's `.md-typeset h3`
+   (0,1,1) and span defaults beat single-class rules on specificity, so
+   we tag the element explicitly to win. */
+span.plex-lightbox__eyebrow {
+  font-family: "DM Sans", system-ui, sans-serif;
+  font-size: 0.65rem;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--copper-700);
+  margin: 0;
+  line-height: 1;
+  flex: 0 0 auto;
+}
+[data-md-color-scheme="slate"] span.plex-lightbox__eyebrow { color: var(--copper-300); }
+h3.plex-lightbox__title {
+  font-family: "Outfit", system-ui, sans-serif;
+  font-weight: 600;
+  font-size: 0.95rem;
+  letter-spacing: -0.012em;
+  margin: 0;
+  padding: 0;
+  color: var(--md-default-fg-color);
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+@media (min-width: 720px) {
+  h3.plex-lightbox__title { font-size: 1.05rem; }
+}
+[data-md-color-scheme="slate"] h3.plex-lightbox__title { color: #fff; }
+
+.plex-lightbox__controls {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.plex-lightbox__count {
+  font-family: "DM Sans", system-ui, sans-serif;
+  font-feature-settings: "tnum" 1;
+  font-size: 0.7rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--md-default-fg-color--light);
+  margin-right: 0.35rem;
+}
+[data-md-color-scheme="slate"] .plex-lightbox__count { color: var(--midnight-300); }
+
+.plex-lightbox__navbtn,
+.plex-lightbox__close {
+  width: 2.1rem;
+  height: 2.1rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: transparent;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  color: var(--md-default-fg-color);
+  cursor: pointer;
+  transition: border-color 160ms ease, color 160ms ease,
+              background-color 160ms ease, transform 200ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.plex-lightbox__navbtn svg,
+.plex-lightbox__close svg { width: 1rem; height: 1rem; }
+.plex-lightbox__navbtn:hover,
+.plex-lightbox__close:hover {
+  border-color: var(--copper-500);
+  color: var(--copper-700);
+  background: color-mix(in srgb, var(--copper-500) 8%, transparent);
+}
+.plex-lightbox__navbtn:active,
+.plex-lightbox__close:active { transform: scale(0.94); }
+.plex-lightbox__navbtn:focus-visible,
+.plex-lightbox__close:focus-visible {
+  outline: 2px solid var(--copper-500);
+  outline-offset: 2px;
+}
+[data-md-color-scheme="slate"] .plex-lightbox__navbtn,
+[data-md-color-scheme="slate"] .plex-lightbox__close {
+  border-color: var(--midnight-700);
+  color: #fff;
+}
+[data-md-color-scheme="slate"] .plex-lightbox__navbtn:hover,
+[data-md-color-scheme="slate"] .plex-lightbox__close:hover {
+  border-color: var(--copper-400);
+  color: var(--copper-300);
+  background: color-mix(in srgb, var(--copper-500) 12%, transparent);
+}
+
+/* Stage: the screenshot itself. We use object-fit:contain so the entire
+   image fits without cropping; aspect-ratio keeps the panel proportional
+   so a missing image doesn't collapse the layout. */
+.plex-lightbox__stage {
+  position: relative;
+  margin: 0;
+  padding: clamp(0.75rem, 1.5vw, 1.5rem);
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: auto;
+  background: linear-gradient(
+    180deg,
+    var(--md-default-bg-color) 0%,
+    color-mix(in srgb, var(--md-default-bg-color) 92%, var(--copper-500)) 100%
+  );
+}
+[data-md-color-scheme="slate"] .plex-lightbox__stage {
+  background: linear-gradient(
+    180deg,
+    var(--midnight-950) 0%,
+    color-mix(in srgb, var(--midnight-950) 86%, var(--copper-700)) 100%
+  );
+}
+
+.plex-lightbox__img {
+  display: block;
+  width: 100%;
+  height: auto;
+  /* Budget ~5.5rem for the toolbar + caption + stage padding so the
+     screenshot owns the rest. Was 9rem when the bar was ~3x taller. */
+  max-height: calc(92vh - 5.5rem);
+  object-fit: contain;
+  border-radius: calc(var(--plex-radius-lg) - 6px);
+  border: 1px solid var(--md-default-fg-color--lightest);
+  background: var(--md-default-bg-color);
+  box-shadow: 0 12px 32px -16px rgba(15, 23, 42, 0.35);
+}
+[data-md-color-scheme="slate"] .plex-lightbox__img {
+  border-color: var(--midnight-800);
+  background: var(--midnight-900);
+  box-shadow: 0 12px 32px -16px rgba(0, 0, 0, 0.6);
+}
+
+/* Theme-gated visibility for the two stacked img tags inside the
+   lightbox stage. Same pattern as the carousel frame. */
+.plex-lightbox__img[data-theme="dark"]  { display: none; }
+.plex-lightbox__img[data-theme="light"] { display: block; }
+[data-md-color-scheme="slate"] .plex-lightbox__img[data-theme="light"] { display: none; }
+[data-md-color-scheme="slate"] .plex-lightbox__img[data-theme="dark"]  { display: block; }
+
+.plex-lightbox__caption {
+  font-family: "DM Sans", system-ui, sans-serif;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  color: var(--md-default-fg-color--light);
+  text-align: left;
+  max-width: 70ch;
+  margin: 0 auto;
+}
+[data-md-color-scheme="slate"] .plex-lightbox__caption { color: var(--midnight-200); }
+
+@media (max-width: 720px) {
+  .plex-lightbox { padding: 0; }
+  .plex-lightbox__shell {
+    width: 100vw;
+    max-height: 100vh;
+    height: 100vh;
+    border-radius: 0;
+    border: 0;
+  }
+  .plex-lightbox__bar { padding: 0.7rem 0.85rem; }
+  .plex-lightbox__count { display: none; }
+  .plex-lightbox__navbtn,
+  .plex-lightbox__close { width: 2rem; height: 2rem; }
+  .plex-lightbox__img { max-height: calc(100vh - 5.5rem); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .plex-lightbox,
+  .plex-lightbox__shell {
+    transition: none;
+  }
+}
+
+/* When the lightbox is open, lock the body scroll. JS toggles this class
+   on <html>. We avoid `overflow:hidden` on body alone because Material's
+   layout fights it. */
+html.plex-lightbox-open,
+html.plex-lightbox-open body {
+  overflow: hidden;
 }

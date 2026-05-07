@@ -16,7 +16,8 @@ binary via `go:embed all:dist`. There's no separate frontend server.
 | `/portal/` | Dashboard: 1-hour stats and recent activity. |
 | `/portal/tools` | Tool catalog grouped by category. |
 | `/portal/tools/<name>` | Per-tool detail with Overview / Try It tabs. |
-| `/portal/audit` | Filterable event browser with pagination. |
+| `/portal/audit` | Filterable event browser with pagination, click-to-expand drawer, JSONB filters, SSE live tail. |
+| `/portal/audit/compare` | Side-by-side structural diff of two events; staged from the drawer's Compare button (`?a=<id>&b=<id>`). |
 | `/portal/keys` | DB-backed API key management. |
 | `/portal/config` | Read-only JSON view of the running config (secrets redacted). |
 | `/portal/wellknown` | Pretty-print of the protected-resource and authorization-server metadata that gateways read. |
@@ -49,6 +50,12 @@ and dark schemes share the same variable names with different values.
 A small inline script in `index.html` applies the `.dark` class to
 `<html>` before stylesheets load to avoid the classic light-flash on
 dark systems.
+
+## Audit inspection
+
+The audit page is the operator-facing surface for the audit pipeline. Clicking any row opens a four-tab drawer (Overview / Request / Response / Notifications) deep-linked via `?id=<event-id>`. Inline buttons replay the captured call against the live MCP server (with confirmation; rate-limited per identity) or stash the event for side-by-side comparison at `/portal/audit/compare`. A **Live tail** toggle subscribes to the SSE stream so new events surface above the historical filter view in real time, and a **JSONB filters** toggle opens the editor for the path-aware filters that compile to GIN-indexed containment queries against `audit_payloads`.
+
+The full operator workflow (capture a call, inspect it, replay it, compare to a baseline, filter, export) is in [Inspection workflow](inspection.md).
 
 ## Try It
 
