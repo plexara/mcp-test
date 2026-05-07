@@ -116,8 +116,10 @@
   <text x="80" y="280" class="sans" font-size="132" font-weight="700"
         letter-spacing="-3" fill="#f8fafc" text-rendering="geometricPrecision">mcp-test</text>
 
-  <!-- Underline rule (480px wide gradient) -->
-  <rect x="80" y="306" width="480" height="3" fill="url(#hr)" />
+  <!-- Underline rule under the wordmark. Sits below the "p"/"t"
+       descenders (which extend to ~y=312 for the 132px hero glyph)
+       so the rule never clips the letterforms. -->
+  <rect x="80" y="322" width="480" height="3" fill="url(#hr)" />
 
   <!-- Tagline (two lines, second slightly dimmer for editorial rhythm) -->
   <text x="80" y="372" class="body" font-size="30" font-weight="400"
@@ -136,8 +138,12 @@
     <text x="463" fill="#94a3b8">  embedded portal</text>
   </g>
 
-  <!-- Bottom URL with mono treatment + copper underscore -->
-  <g transform="translate(80, 558)">
+  <!-- Bottom URL with mono treatment + copper underscore. Y=520 aligns
+       the URL baseline with the bottom of the right-column code panel
+       (panel ends at y=120+390=510), so the two columns share a
+       footer baseline instead of the URL floating alone 80px below
+       the panel. -->
+  <g transform="translate(80, 520)">
     <text x="0" y="0" class="mono" font-size="20" font-weight="500"
           fill="#5fe8df" text-rendering="geometricPrecision">github.com/plexara/mcp-test</text>
     <rect x="0" y="10" width="320" height="1.5" fill="#14b8ab" opacity="0.6" />
