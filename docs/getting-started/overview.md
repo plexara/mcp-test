@@ -11,15 +11,58 @@ fronted by an OIDC provider (for bearer-token auth and portal login).
 
 ## What you get
 
-| Surface | What it is |
-| --- | --- |
-| `/` (HTTP) | The MCP streamable HTTP endpoint. Browsers hitting this URL are redirected to `/portal/`; MCP clients pass through. |
-| `/portal/` | An embedded React 19 portal: dashboard, tools (with a per-tool Try-It form), audit log browser, API-key management, server config viewer, gateway-discovery surface. |
-| `/api/v1/portal/*` | Read-only REST endpoints behind cookie or API-key auth. Useful for scripting against a running server. |
-| `/api/v1/admin/*` | Mutating REST endpoints (key CRUD, Try-It proxy). |
-| `/.well-known/oauth-protected-resource` | RFC 9728 metadata advertising the issuer. The MCP auth gateway points 401 challenges at it. |
-| `/.well-known/oauth-authorization-server` | Stub pointing at the upstream issuer's metadata. |
-| `/healthz` and `/readyz` | Liveness and readiness probes. |
+<div class="def-cards" markdown>
+
+<div class="def-card" markdown>
+<div class="def-card__head"><code class="def-card__name">/</code></div>
+<div class="def-card__body" markdown>
+The MCP streamable HTTP endpoint. Browsers hitting this URL are redirected to `/portal/`; MCP clients pass through.
+</div>
+</div>
+
+<div class="def-card" markdown>
+<div class="def-card__head"><code class="def-card__name">/portal/</code></div>
+<div class="def-card__body" markdown>
+An embedded React 19 portal: dashboard, tools (with a per-tool Try-It form), audit log browser, API-key management, server config viewer, gateway-discovery surface.
+</div>
+</div>
+
+<div class="def-card" markdown>
+<div class="def-card__head"><code class="def-card__name">/api/v1/portal/*</code></div>
+<div class="def-card__body" markdown>
+Read-only REST endpoints behind cookie or API-key auth. Useful for scripting against a running server.
+</div>
+</div>
+
+<div class="def-card" markdown>
+<div class="def-card__head"><code class="def-card__name">/api/v1/admin/*</code></div>
+<div class="def-card__body" markdown>
+Mutating REST endpoints (key CRUD, Try-It proxy).
+</div>
+</div>
+
+<div class="def-card" markdown>
+<div class="def-card__head"><code class="def-card__name">/.well-known/oauth-protected-resource</code></div>
+<div class="def-card__body" markdown>
+RFC 9728 metadata advertising the issuer. The MCP auth gateway points 401 challenges at it.
+</div>
+</div>
+
+<div class="def-card" markdown>
+<div class="def-card__head"><code class="def-card__name">/.well-known/oauth-authorization-server</code></div>
+<div class="def-card__body" markdown>
+Stub pointing at the upstream issuer's metadata.
+</div>
+</div>
+
+<div class="def-card" markdown>
+<div class="def-card__head"><code class="def-card__name">/healthz and /readyz</code></div>
+<div class="def-card__body" markdown>
+Liveness and readiness probes.
+</div>
+</div>
+
+</div>
 
 ## Components in front of the binary
 

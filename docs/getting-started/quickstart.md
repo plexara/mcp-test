@@ -26,12 +26,29 @@ make dev
 
 When it's up:
 
-| URL | What |
-| --- | --- |
-| <http://localhost:8080/portal/> | Portal — sign in with `dev`/`dev` (OIDC) or paste an API key. |
-| <http://localhost:8080/> | MCP streamable HTTP endpoint. Browsers redirect to the portal; MCP clients pass through. |
-| <http://localhost:8081/> | Keycloak admin console (`admin`/`admin`). |
-| <http://localhost:8080/healthz> | Liveness. |
+<div class="def-cards" markdown>
+
+<div class="def-card" markdown>
+<div class="def-card__head"><code class="def-card__name">http://localhost:8080/portal/</code></div>
+<div class="def-card__body" markdown>Portal. Sign in with `dev` / `dev` (OIDC) or paste an API key.</div>
+</div>
+
+<div class="def-card" markdown>
+<div class="def-card__head"><code class="def-card__name">http://localhost:8080/</code></div>
+<div class="def-card__body" markdown>MCP streamable HTTP endpoint. Browsers redirect to the portal; MCP clients pass through.</div>
+</div>
+
+<div class="def-card" markdown>
+<div class="def-card__head"><code class="def-card__name">http://localhost:8081/</code></div>
+<div class="def-card__body" markdown>Keycloak admin console (`admin` / `admin`).</div>
+</div>
+
+<div class="def-card" markdown>
+<div class="def-card__head"><code class="def-card__name">http://localhost:8080/healthz</code></div>
+<div class="def-card__body" markdown>Liveness.</div>
+</div>
+
+</div>
 
 The dev API key is `devkey-please-change`. Override it via
 `MCPTEST_DEV_KEY` if you want something else.

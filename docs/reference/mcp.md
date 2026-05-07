@@ -43,13 +43,40 @@ implemented; they're not relevant to a gateway test fixture.)
 The SDK handles every standard MCP method. The relevant ones for
 mcp-test:
 
-| Method | Notes |
-| --- | --- |
-| `initialize` | Returns `serverInfo` (name, version), `capabilities`, `protocolVersion`, and `instructions` (see [Server Instructions](../configuration/instructions.md)). |
-| `initialized` (notification) | Marks the session as ready. |
-| `tools/list` | Returns every registered tool with its JSON schema (derived from the Go input struct). |
-| `tools/call` | Invokes the named tool. Subject to the audit middleware. |
-| `notifications/progress` | Server → client. Emitted by the `progress` tool when the caller supplies a `progressToken`. |
+<div class="def-cards" markdown>
+
+<div class="def-card" markdown>
+<div class="def-card__head"><code class="def-card__name">initialize</code></div>
+<div class="def-card__body" markdown>Returns `serverInfo` (name, version), `capabilities`, `protocolVersion`, and `instructions` (see [Server Instructions](../configuration/instructions.md)).</div>
+</div>
+
+<div class="def-card" markdown>
+<div class="def-card__head">
+<code class="def-card__name">initialized</code>
+<div class="def-card__chips"><span class="def-card__chip"><span class="def-card__chip-label">kind</span><span class="def-card__chip-value">notification</span></span></div>
+</div>
+<div class="def-card__body" markdown>Marks the session as ready.</div>
+</div>
+
+<div class="def-card" markdown>
+<div class="def-card__head"><code class="def-card__name">tools/list</code></div>
+<div class="def-card__body" markdown>Returns every registered tool with its JSON schema (derived from the Go input struct).</div>
+</div>
+
+<div class="def-card" markdown>
+<div class="def-card__head"><code class="def-card__name">tools/call</code></div>
+<div class="def-card__body" markdown>Invokes the named tool. Subject to the audit middleware.</div>
+</div>
+
+<div class="def-card" markdown>
+<div class="def-card__head">
+<code class="def-card__name">notifications/progress</code>
+<div class="def-card__chips"><span class="def-card__chip"><span class="def-card__chip-label">direction</span><span class="def-card__chip-value">server → client</span></span></div>
+</div>
+<div class="def-card__body" markdown>Emitted by the `progress` tool when the caller supplies a `progressToken`.</div>
+</div>
+
+</div>
 
 ## Tool schema
 

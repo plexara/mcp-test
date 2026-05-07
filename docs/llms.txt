@@ -32,8 +32,10 @@ mcp-test ships 12 tools across 4 categories. Each is a thin, deterministic shim 
 ## Operations
 
 - [Audit log](https://mcp-test.plexara.io/operations/audit/): Postgres schema, retention, redaction, and the JSON shape returned by the portal API.
+- [Inspection workflow](https://mcp-test.plexara.io/operations/inspection/): End-to-end operator walkthrough of the v1.2 audit drawer, comparison page, replay endpoint, JSONB filters, live tail, and NDJSON export.
 - [Portal](https://mcp-test.plexara.io/operations/portal/): React 19 SPA embedded into the binary; pages, Try-It proxy, dashboard.
 - [Deployment](https://mcp-test.plexara.io/operations/deployment/): Docker, Kubernetes, distroless image, healthcheck, graceful shutdown.
+- [Kubernetes example](https://mcp-test.plexara.io/operations/kubernetes/): Self-contained manifests + bash installer for an mcp-test + Postgres install on any cluster with nginx ingress and cert-manager. One file per resource, full YAML embedded inline.
 - [Testing a gateway](https://mcp-test.plexara.io/operations/gateway-testing/): Patterns for asserting on a gateway's identity-forwarding, redaction, enrichment, and progress-pass-through using mcp-test as the upstream.
 
 ## Reference

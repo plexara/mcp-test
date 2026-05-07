@@ -51,6 +51,10 @@ Mount the config at `/app/configs/mcp-test.yaml` and run with
 
 ## Kubernetes
 
+For a self-contained, ready-to-run installation (manifests + bash installer with progress, Postgres bundled in-cluster), see [Kubernetes example](kubernetes.md). The notes below cover the building blocks if you're wiring mcp-test into existing cluster infrastructure.
+
+### Building blocks
+
 A minimal Deployment / Service / Ingress:
 
 ```yaml

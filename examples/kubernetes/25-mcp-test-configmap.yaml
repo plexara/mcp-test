@@ -1,0 +1,91 @@
+# mcp-test runtime config. The container reads this from
+# /etc/mcp-test/mcp-test.yaml; see 40-mcp-test-deployment.yaml.
+#
+# Defaults below ship a working installation with:
+#   - API-key auth only (OIDC disabled). Operators authenticate by
+#     pasting the dev key on the portal login screen, and MCP clients
+#     send `X-API-Key: <DEV_KEY>`. To turn on OIDC instead, set
+#     `oidc.enabled: true` and supply issuer + client credentials via
+#     additional secret keys + env mappings in the Deployment.
+#   - Audit log fully on, payloads + headers captured, 30-day retention.
+#   - Portal at /portal/, MCP at /, behind the same Ingress.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mcp-test
+  namespace: mcp-test
+  labels:
+    app: mcp-test
+    app.kubernetes.io/name: mcp-test
+    app.kubernetes.io/component: server
+    app.kubernetes.io/part-of: mcp-test
+data:
+  mcp-test.yaml: |
+    server:
+      name: mcp-test
+      address: ":8080"
+      # REPLACE: must match the public URL clients reach this server at.
+      # Used in OIDC redirects (when enabled) and RFC 9728 metadata.
+      base_url: "https://mcp-test-server.example.com"
+      read_header_timeout: 10s
+      shutdown:
+        grace_period: 25s
+        pre_shutdown_delay: 2s
+      tls:
+        enabled: false
+      streamable:
+        session_timeout: 30m
+        stateless: false
+        json_response: false
+
+    oidc:
+      enabled: false
+      # When you flip enabled to true, supply these via env from a
+      # secret you add yourself. The defaults below match the dev
+      # Keycloak; replace with your real issuer.
+      # issuer: "https://your-idp.example.com/realms/mcp-test"
+      # audience: "mcp-test"
+      # client_id: "${MCPTEST_OIDC_CLIENT_ID}"
+      # client_secret: "${MCPTEST_OIDC_CLIENT_SECRET}"
+
+    api_keys:
+      file:
+        - name: bootstrap
+          key: "${MCPTEST_DEV_KEY}"
+          description: "Bootstrap API key for portal admin and MCP smoke tests"
+      db:
+        enabled: true
+
+    auth:
+      allow_anonymous: false
+      require_for_mcp: true
+      require_for_portal: true
+
+    database:
+      url: "${MCPTEST_DATABASE_URL}"
+      max_open_conns: 25
+      max_idle_conns: 5
+      conn_max_lifetime: 1h
+
+    audit:
+      enabled: true
+      capture_payloads: true
+      capture_headers: true
+      max_payload_bytes: 65536
+      retention_days: 30
+      redact_keys: [password, token, secret, authorization, api_key, credentials, cookie]
+
+    portal:
+      enabled: true
+      cookie_name: mcp_test_session
+      cookie_secret: "${MCPTEST_COOKIE_SECRET}"
+      # cookie_secure must be false when serving over plain HTTP locally;
+      # leave true for the Ingress + cert-manager flow this example uses.
+      cookie_secure: true
+      oidc_redirect_path: /portal/auth/callback
+
+    tools:
+      identity:  { enabled: true }
+      data:      { enabled: true }
+      failure:   { enabled: true }
+      streaming: { enabled: true }
