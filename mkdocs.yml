@@ -158,5 +158,11 @@ plugins:
   - social:
       enabled: !ENV [CI, false]
       cards_layout_options:
+        # Match the rest of the site: midnight-950 background, slate-50
+        # foreground, Outfit display (the same display font used in the
+        # carousel headings and lightbox title) for the page-title text.
+        # Google Fonts is reachable from the GitHub Actions runner, so
+        # the plugin can fetch the woff2 at render time.
         background_color: "#020617"
         color: "#f8fafc"
+        font_family: Outfit
