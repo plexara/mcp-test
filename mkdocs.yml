@@ -77,6 +77,7 @@ nav:
       - Streaming: tools/streaming.md
   - Operations:
       - Audit Log: operations/audit.md
+      - Inspection workflow: operations/inspection.md
       - Portal: operations/portal.md
       - Deployment: operations/deployment.md
       - Testing a Gateway: operations/gateway-testing.md
