@@ -149,82 +149,83 @@
   <!-- communicates "this is an MCP server" instantly.              -->
   <!-- ============================================================ -->
 
-  <g transform="translate(720, 130)">
+  <g transform="translate(720, 120)">
     <!-- Soft glow behind the panel -->
-    <rect x="-30" y="-30" width="500" height="430" rx="24" fill="url(#codeGlow)" />
+    <rect x="-30" y="-30" width="500" height="450" rx="24" fill="url(#codeGlow)" />
 
     <!-- Code panel: 1px copper-tinted border, midnight surface, rounded.
-         Same shape vocabulary as the .api-endpoint cards. -->
-    <rect x="0" y="0" width="440" height="370" rx="14"
+         Same shape vocabulary as the .api-endpoint cards.
+         Panel: 440 x 390. Internal padding budget:
+           title bar: y=0..44 (44px tall)
+           code:      y=64..344 (top padding 20px from title bar
+                                 line, line-height 28px x 9 lines = 252,
+                                 plus padding-bottom 28px)
+           footer:    y=362..390 (28px tall) -->
+    <rect x="0" y="0" width="440" height="390" rx="14"
           fill="#0a1424" stroke="#14b8ab" stroke-opacity="0.30" stroke-width="1" />
 
-    <!-- Title bar of the code panel -->
-    <line x1="0" y1="42" x2="440" y2="42" stroke="#1e293b" stroke-width="1" />
+    <!-- Title bar separator -->
+    <line x1="0" y1="44" x2="440" y2="44" stroke="#1e293b" stroke-width="1" />
 
-    <!-- Three macOS-style window dots, but in copper tones (subverts the
-         cliche just enough to read intentional, not stock). -->
-    <g transform="translate(20, 21)">
+    <!-- Three macOS-style window dots in copper tones. Centered
+         vertically in the title bar (44/2 = 22). -->
+    <g transform="translate(22, 22)">
       <circle cx="0"  cy="0" r="5" fill="#073d5c" />
       <circle cx="16" cy="0" r="5" fill="#1388ae" />
       <circle cx="32" cy="0" r="5" fill="#14b8ab" />
     </g>
 
-    <!-- File label in the title bar -->
-    <text x="220" y="26" text-anchor="middle" class="mono" font-size="13" font-weight="500"
+    <!-- File label, vertically centered in the title bar (y=27 puts the
+         baseline below center for a 13px font so glyphs sit on the
+         center line). Horizontally centered between the right edge of
+         the dots and the right edge of the panel: dots end at x=58, so
+         center of (58 to 440) = 249. -->
+    <text x="249" y="27" text-anchor="middle" class="mono" font-size="13" font-weight="500"
           fill="#5fe8df" letter-spacing="0.5" text-rendering="geometricPrecision">tools/call</text>
 
-    <!-- Code body. Each line manually laid out for syntax-highlight
-         control. Keys in copper-300, strings in slate-100, braces in
-         slate-500, numbers in copper-400. -->
-    <g class="mono" font-size="20" font-weight="400" text-rendering="geometricPrecision">
-      <!-- y=80 line 1: { -->
-      <text x="28" y="80" fill="#64748b">{</text>
+    <!-- Code body. Standard JSON pretty-print: every key uses ": " (one
+         space) before its value, two-space indentation per nesting level.
+         xml:space="preserve" stops SVG from collapsing the trailing space
+         in the colon tspan (otherwise "key": "value" renders as
+         "key":"value" because the space sits at a tspan boundary).
+         Line-height 28px starting at y=82. -->
+    <g class="mono" font-size="19" font-weight="400" text-rendering="geometricPrecision" xml:space="preserve">
+      <!-- line 1: { -->
+      <text x="28" y="82" fill="#64748b">{</text>
 
-      <!-- y=110 line 2:   "jsonrpc": "2.0", -->
-      <text x="48" y="110">
-        <tspan fill="#5fe8df">"jsonrpc"</tspan><tspan fill="#64748b">: </tspan><tspan fill="#f1f5f9">"2.0"</tspan><tspan fill="#64748b">,</tspan>
-      </text>
+      <!-- line 2:   "jsonrpc": "2.0", -->
+      <text x="48" y="110"><tspan fill="#5fe8df">"jsonrpc"</tspan><tspan fill="#64748b">: </tspan><tspan fill="#f1f5f9">"2.0"</tspan><tspan fill="#64748b">,</tspan></text>
 
-      <!-- y=140 line 3:   "method": "tools/call", -->
-      <text x="48" y="140">
-        <tspan fill="#5fe8df">"method"</tspan><tspan fill="#64748b">:  </tspan><tspan fill="#f1f5f9">"tools/call"</tspan><tspan fill="#64748b">,</tspan>
-      </text>
+      <!-- line 3:   "method": "tools/call", -->
+      <text x="48" y="138"><tspan fill="#5fe8df">"method"</tspan><tspan fill="#64748b">: </tspan><tspan fill="#f1f5f9">"tools/call"</tspan><tspan fill="#64748b">,</tspan></text>
 
-      <!-- y=170 line 4:   "params": { -->
-      <text x="48" y="170">
-        <tspan fill="#5fe8df">"params"</tspan><tspan fill="#64748b">:  </tspan><tspan fill="#64748b">{</tspan>
-      </text>
+      <!-- line 4:   "params": { -->
+      <text x="48" y="166"><tspan fill="#5fe8df">"params"</tspan><tspan fill="#64748b">: {</tspan></text>
 
-      <!-- y=200 line 5:     "name":      "whoami", -->
-      <text x="68" y="200">
-        <tspan fill="#5fe8df">"name"</tspan><tspan fill="#64748b">:      </tspan><tspan fill="#f1f5f9">"whoami"</tspan><tspan fill="#64748b">,</tspan>
-      </text>
+      <!-- line 5:     "name": "whoami", -->
+      <text x="68" y="194"><tspan fill="#5fe8df">"name"</tspan><tspan fill="#64748b">: </tspan><tspan fill="#f1f5f9">"whoami"</tspan><tspan fill="#64748b">,</tspan></text>
 
-      <!-- y=230 line 6:     "arguments": { } -->
-      <text x="68" y="230">
-        <tspan fill="#5fe8df">"arguments"</tspan><tspan fill="#64748b">: { }</tspan>
-      </text>
+      <!-- line 6:     "arguments": {} -->
+      <text x="68" y="222"><tspan fill="#5fe8df">"arguments"</tspan><tspan fill="#64748b">: {}</tspan></text>
 
-      <!-- y=260 line 7:   }, -->
-      <text x="48" y="260" fill="#64748b">},</text>
+      <!-- line 7:   }, -->
+      <text x="48" y="250" fill="#64748b">},</text>
 
-      <!-- y=290 line 8:   "id": 1 -->
-      <text x="48" y="290">
-        <tspan fill="#5fe8df">"id"</tspan><tspan fill="#64748b">:      </tspan><tspan fill="#2dd3cb">1</tspan>
-      </text>
+      <!-- line 8:   "id": 1 -->
+      <text x="48" y="278"><tspan fill="#5fe8df">"id"</tspan><tspan fill="#64748b">: </tspan><tspan fill="#2dd3cb">1</tspan></text>
 
-      <!-- y=320 line 9: } -->
-      <text x="28" y="320" fill="#64748b">}</text>
+      <!-- line 9: } -->
+      <text x="28" y="306" fill="#64748b">}</text>
     </g>
 
-    <!-- Bottom-edge response indicator: a subtle two-pixel copper line
-         + small "200 OK · 12ms" caption. Suggests every call is audited. -->
-    <line x1="20" y1="345" x2="420" y2="345" stroke="#14b8ab" stroke-opacity="0.20" stroke-width="1" stroke-dasharray="4 6" />
-    <text x="20" y="362" class="mono" font-size="13" font-weight="500"
+    <!-- Footer: dashed copper rule + three caption columns (status,
+         center, latency). Sits in the bottom 44px of the panel. -->
+    <line x1="20" y1="344" x2="420" y2="344" stroke="#14b8ab" stroke-opacity="0.22" stroke-width="1" stroke-dasharray="4 6" />
+    <text x="20" y="368" class="mono" font-size="13" font-weight="500"
           fill="#94a3b8" letter-spacing="0.4" text-rendering="geometricPrecision">200 OK</text>
-    <text x="220" y="362" text-anchor="middle" class="mono" font-size="13" font-weight="400"
+    <text x="220" y="368" text-anchor="middle" class="mono" font-size="13" font-weight="400"
           fill="#5fe8df" letter-spacing="0.4" text-rendering="geometricPrecision">audited &#8594; postgres</text>
-    <text x="420" y="362" text-anchor="end" class="mono" font-size="13" font-weight="400"
+    <text x="420" y="368" text-anchor="end" class="mono" font-size="13" font-weight="400"
           fill="#94a3b8" letter-spacing="0.4" text-rendering="geometricPrecision">12 ms</text>
   </g>
 </svg>
