@@ -19,6 +19,19 @@ As of v1.1.0 audit data lives in two tables joined 1:1 by event ID:
 
 Cascade delete on the foreign key keeps retention atomic: deleting an `audit_events` row drops its payload row in the same statement.
 
+### Capture knobs
+
+Four config keys under `audit:` control how much detail the payload row carries; see the [configuration reference](../configuration/reference.md#audit) for full definitions.
+
+| Key | Default | Effect |
+|---|---|---|
+| `audit.capture_payloads` | `true` | Master switch for the `audit_payloads` table. Off ⇒ summary-only mode; portal Inspection drawer and replay are disabled for those rows. |
+| `audit.capture_headers` | `true` | Include the redacted request headers blob in the payload row. |
+| `audit.max_payload_bytes` | `65536` | Per-side cap (request and response counted separately). Excess bytes are dropped and `request_truncated` / `response_truncated` is set on the payload row. |
+| `audit.max_notifications` | `100` | Caps notifications stored per call. The streaming tools can emit hundreds; tune to taste. |
+
+A privacy-sensitive deployment usually sets `capture_payloads: false` and accepts the loss of inspection fidelity. A reproducibility-focused deployment raises `max_payload_bytes` to whatever its largest test payload demands so truncation never silently happens.
+
 ## What gets recorded
 
 <div class="def-cards" markdown>
@@ -309,14 +322,20 @@ ORDER BY ts DESC;
 `audit.redact_keys` is a list of case-insensitive substrings.
 Tool-call argument keys matching any substring have their *values*
 replaced with `"[redacted]"` before the row is written. The default
-list includes `password`, `token`, `secret`, `authorization`,
-`cookie`, `api_key`, `credentials`.
+list is `password`, `token`, `secret`, `authorization`, `api_key`,
+`credentials`, `bearer`, `cookie`, `jwt`, `session_id`,
+`private_key`, `passwd`. Setting `redact_keys` replaces the default
+list entirely — it does not merge — so include the defaults when
+extending it.
 
 The match is on argument *keys*, not values. So an argument like
 `{"password": "hunter2"}` is redacted, but a free-text body that
 happens to contain the word "password" is not.
 
-Sanitization is recursive: nested objects and arrays are walked.
+Sanitization is recursive: nested objects and arrays are walked. The
+same list is also applied to HTTP header *names* by the `headers`
+tool, and to the redacted-headers blob captured into
+`audit_payloads.request_headers` when payload capture is on.
 
 ## Retention
 
