@@ -104,7 +104,7 @@ Required when OIDC is enabled.
 </div>
 </div>
 <div class="config-key__body" markdown>
-Required `aud` claim value.
+Optional `aud` claim enforcement. The example config uses `${MCPTEST_OIDC_AUDIENCE:-mcp-test}`. Leave the variable unset and clear `oidc.audience` if you want to skip audience validation.
 </div>
 </div>
 

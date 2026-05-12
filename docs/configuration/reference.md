@@ -255,16 +255,16 @@ The IdP's issuer URL. mcp-test fetches `<issuer>/.well-known/openid-configuratio
 </div>
 </div>
 
-<div class="config-key config-key--required" markdown>
+<div class="config-key" markdown>
 <div class="config-key__head">
 <code class="config-key__name">oidc.audience</code>
 <div class="config-key__chips">
 <span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">string</span></span>
-<span class="config-key__chip config-key__chip--required"><span class="config-key__chip-label">required when</span><span class="config-key__chip-value">oidc.enabled</span></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">""</code></span>
 </div>
 </div>
 <div class="config-key__body" markdown>
-Required `aud` claim value. Tokens that don't carry this audience are rejected.
+Optional `aud` claim enforcement. When non-empty, tokens whose `aud` doesn't match are rejected. When empty, the audience check is skipped entirely. The bundled Keycloak realm and `MCPTEST_OIDC_AUDIENCE` env interpolation default to `mcp-test`.
 </div>
 </div>
 
@@ -430,11 +430,11 @@ If true, missing credentials on `/mcp` resolve to a synthetic Anonymous identity
 <code class="config-key__name">auth.require_for_mcp</code>
 <div class="config-key__chips">
 <span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">bool</span></span>
-<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">true</code></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">false</code></span>
 </div>
 </div>
 <div class="config-key__body" markdown>
-Gate the `/` endpoint. Currently the auth gateway checks for credential *presence* and 401s without one (unless anonymous is allowed).
+Advisory toggle, currently not read by the binary. MCP-endpoint gating is governed by `auth.allow_anonymous` and the composed auth chain: with anonymous off and no matching credential, `MCPAuthGateway` returns 401 with an RFC 9728 `WWW-Authenticate` header regardless of this flag. Shipped configs still set it for forward compatibility.
 </div>
 </div>
 
@@ -443,11 +443,11 @@ Gate the `/` endpoint. Currently the auth gateway checks for credential *presenc
 <code class="config-key__name">auth.require_for_portal</code>
 <div class="config-key__chips">
 <span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">bool</span></span>
-<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">true</code></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">false</code></span>
 </div>
 </div>
 <div class="config-key__body" markdown>
-Gate every `/portal/*` and `/api/v1/*` route. The portal auth middleware is independent of `allow_anonymous`.
+Advisory toggle, currently not read by the binary. The portal API is always behind `pkg/httpsrv.PortalAuth` middleware; that middleware doesn't consult this flag. Setting it has no runtime effect today.
 </div>
 </div>
 
@@ -532,7 +532,11 @@ Audit-log behavior.
 audit:
   enabled: true
   retention_days: 30
-  redact_keys: [password, token, secret, authorization, cookie, api_key, credentials]
+  redact_keys: [password, token, secret, authorization, api_key, credentials, bearer, cookie, jwt, session_id, private_key, passwd]
+  capture_payloads: true
+  capture_headers: true
+  max_payload_bytes: 65536
+  max_notifications: 100
 ```
 
 <div class="config-keys" markdown>
@@ -542,11 +546,11 @@ audit:
 <code class="config-key__name">audit.enabled</code>
 <div class="config-key__chips">
 <span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">bool</span></span>
-<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">true</code></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">false</code></span>
 </div>
 </div>
 <div class="config-key__body" markdown>
-Disables the audit pipeline entirely when false (no rows written, no portal data).
+Master switch for the audit pipeline. When false, `audit.NoopLogger` is wired up — no rows are written and the portal Audit page has nothing to show. The shipped example, dev, and live configs all set this to `true` because audit is the headline feature of mcp-test; the Go zero-value default only takes effect if you author a fresh config without an `audit:` block.
 </div>
 </div>
 
@@ -568,11 +572,63 @@ Documented retention target. mcp-test does not currently auto-prune; deploy a cr
 <code class="config-key__name">audit.redact_keys</code>
 <div class="config-key__chips">
 <span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">[]string</span></span>
-<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">[password, token, secret, authorization, api_key, credentials]</code></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">[password, token, secret, authorization, api_key, credentials, bearer, cookie, jwt, session_id, private_key, passwd]</code></span>
 </div>
 </div>
 <div class="config-key__body" markdown>
-Case-insensitive substring match. Any tool-call argument key matching one of these gets its value replaced with `[redacted]` before the row is written.
+Case-insensitive substring match. Any tool-call argument key matching one of these gets its value replaced with `[redacted]` before the row is written. The same list is applied to HTTP header names by the `headers` tool. Extend it for domain-specific secret naming; setting it replaces the default, it does not merge.
+</div>
+</div>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">audit.capture_payloads</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">bool</span></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">true</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+Controls whether the `audit_payloads` sibling row (full request/response envelope, captured notifications, error categories) is written alongside the `audit_events` summary. Off by default in privacy-sensitive deployments; on by default here because mcp-test is a test fixture and full visibility is the point. The portal Inspection drawer and replay endpoint require this to be on.
+</div>
+</div>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">audit.capture_headers</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">bool</span></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">true</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+Whether redacted HTTP request headers are included in the payload row. No effect when `capture_payloads` is false. Headers are passed through the same redaction list as parameter keys (case-insensitive substring match).
+</div>
+</div>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">audit.max_payload_bytes</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">int</span></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">65536</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+Per-side cap (request and response counted separately). Payloads beyond this are dropped and the corresponding `request_truncated` / `response_truncated` flag on the payload row is set. Raise this when testing tools that legitimately return large blobs (e.g. `sized_response` at high `size_bytes`).
+</div>
+</div>
+
+<div class="config-key" markdown>
+<div class="config-key__head">
+<code class="config-key__name">audit.max_notifications</code>
+<div class="config-key__chips">
+<span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">int</span></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">100</code></span>
+</div>
+</div>
+<div class="config-key__body" markdown>
+Caps the number of notifications stored per call in `audit_payloads.notifications`. The streaming tools (`progress`, `chatty`) can emit hundreds; raise or lower based on how much detail the operator needs in the portal's Inspection view.
 </div>
 </div>
 
@@ -637,11 +693,11 @@ At least 16 bytes, 32+ recommended. HMAC key for cookie signing.
 <code class="config-key__name">portal.cookie_secure</code>
 <div class="config-key__chips">
 <span class="config-key__chip"><span class="config-key__chip-label">type</span><span class="config-key__chip-value">bool</span></span>
-<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">true</code></span>
+<span class="config-key__chip config-key__chip--default"><span class="config-key__chip-label">default</span><code class="config-key__chip-value">false</code></span>
 </div>
 </div>
 <div class="config-key__body" markdown>
-Sets the `Secure` cookie attribute. Leave on in production; turn off for local HTTP-only dev.
+Sets the `Secure` cookie attribute on the portal session cookie and on the PKCE state cookie used during the OIDC login flow. The shipped example and live configs set this to `true`; the dev config leaves it `false` for plain-HTTP localhost browsing. Always `true` in production.
 </div>
 </div>
 

@@ -59,7 +59,10 @@ database:
 audit:
   enabled: true
   retention_days: 30
-  redact_keys: [password, token, secret, authorization, api_key, credentials, cookie]
+  # Case-insensitive substring match on tool-call argument keys and HTTP
+  # header names. Setting this replaces the default list entirely — it does
+  # not merge — so include the defaults below when extending it.
+  redact_keys: [password, token, secret, authorization, api_key, credentials, bearer, cookie, jwt, session_id, private_key, passwd]
   # Inspection / debugging capture: full request and response envelopes
   # land in the sibling audit_payloads table for portal drill-down. Set
   # capture_payloads to false to keep audit_events summary-only.
